@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Recycler } from '../lib/db';
+import { db, type Recycler, DEFAULT_PROFILE } from '../lib/db';
 import { generateHandoverCode } from '../lib/hash';
 import { 
   CheckCircle2, 
@@ -26,6 +26,7 @@ export default function HandoverPage() {
   const navigate = useNavigate();
   const lot = useLiveQuery(() => db.lots.get(id as string), [id]);
   const recyclers = useLiveQuery(() => db.recyclers.toArray(), []) || [];
+  const profile = useLiveQuery(() => db.profile.get('current-user'));
   
   const [selectedRecyclerId, setSelectedRecyclerId] = useState<string | null>(null);
   const [selectedRecycler, setSelectedRecycler] = useState<Recycler | null>(null);
@@ -61,7 +62,11 @@ export default function HandoverPage() {
   const co2Saved = (parseFloat(lot.weight) * 2.8).toFixed(1);
   const carbonPoints = Math.floor(parseFloat(lot.weight) * 10);
   const manifestId = `CPCB-MNF-${(lot.id || '0000').slice(0, 8).toUpperCase()}`;
-  const collectorId = `KAB-${(lot.id || '0000').slice(0, 4).toUpperCase()}`;
+  
+  // Use persistent profile instead of generating a random identity
+  const collectorId = lot.collectorId || profile?.collectorId || DEFAULT_PROFILE.collectorId;
+  const collectorName = profile?.name || DEFAULT_PROFILE.name;
+  const collectorLocation = profile?.location || DEFAULT_PROFILE.location;
 
   const handleCompleteHandover = async () => {
     await db.lots.update(lot.id, {
@@ -100,10 +105,24 @@ export default function HandoverPage() {
         /* STEP 1: SELECT BUYER / RECYCLER */
         <div>
           <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 mb-5">
-            <span className="text-[11px] font-bold text-blue-600 tracking-wider uppercase bg-blue-50 px-2 py-0.5 rounded-md">
-              Consignment Ready
-            </span>
-            <h1 className="text-2xl font-black mt-2 text-[#14213D]">{lot.material}</h1>
+            <div className="flex items-start justify-between">
+              <div>
+                <span className="text-[11px] font-bold text-blue-600 tracking-wider uppercase bg-blue-50 px-2 py-0.5 rounded-md">
+                  Consignment Ready
+                </span>
+                <h1 className="text-2xl font-black mt-2 text-[#14213D]">{lot.material}</h1>
+                <span className="inline-block mt-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-gray-100 text-gray-700">
+                  Condition: {lot.condition || 'Mixed Scrap'}
+                </span>
+              </div>
+              {lot.photo && (
+                <img 
+                  src={lot.photo} 
+                  alt={lot.material} 
+                  className="w-16 h-16 rounded-xl object-cover border border-gray-200 shadow-sm ml-3 flex-shrink-0"
+                />
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-3 mt-4 pt-4 border-t border-gray-100 text-xs">
               <div>
                 <p className="text-gray-400 font-medium">Batch Weight</p>
@@ -267,7 +286,8 @@ export default function HandoverPage() {
                 <span>ORIGIN INFO</span>
               </div>
               <div className="space-y-1">
-                <p><span className="text-gray-400">COLLECTOR ID:</span> <strong>{collectorId}</strong></p>
+                <p><span className="text-gray-400">COLLECTOR:</span> <strong>{collectorName} ({collectorId})</strong></p>
+                <p><span className="text-gray-400">DISPATCH ORIGIN:</span> <strong>{collectorLocation}</strong></p>
                 <p><span className="text-gray-400">DISPATCH TYPE:</span> <span className="inline-flex items-center font-bold text-[#14213D]"><Truck size={13} className="mr-1 text-blue-600" /> 3-Wheeler E-Cart</span></p>
                 <p><span className="text-gray-400">PACKAGING:</span> <strong>Grade-A Sorted Bags</strong></p>
                 <p><span className="text-gray-400">DATE & TIME:</span> <strong>{new Date().toLocaleString()}</strong></p>
@@ -284,10 +304,21 @@ export default function HandoverPage() {
                 <span>MATERIAL SPECIFICATION</span>
                 <span>AUDIT TERMS</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">MATERIAL:</span>
-                <strong className="text-[#14213D]">{lot.material}</strong>
+              <div className="flex justify-between items-center">
+                <div>
+                  <span className="text-gray-500">MATERIAL: </span>
+                  <strong className="text-[#14213D]">{lot.material}</strong>
+                </div>
+                <span className="text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-bold">
+                  {lot.condition || 'Mixed Scrap'}
+                </span>
               </div>
+              {lot.photo && (
+                <div className="py-1 flex items-center space-x-2 border-y border-dashed border-gray-100 my-1">
+                  <img src={lot.photo} alt="Batch verification" className="w-12 h-12 rounded-lg object-cover border border-gray-200 shadow-sm" />
+                  <span className="text-[10px] text-gray-500 font-sans">Verified Batch Photo Captured</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-gray-500">HAZARD CLASS:</span>
                 <span className="font-bold text-amber-700">Schedule-I (Sec 4)</span>
