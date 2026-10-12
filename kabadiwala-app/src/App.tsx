@@ -1,6 +1,16 @@
 import React, { useEffect, useState, createContext, useContext } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { Home, PlusSquare, History, ShieldCheck, Database, UserCircle, QrCode } from 'lucide-react';
+import { 
+  Home, 
+  PlusSquare, 
+  History, 
+  ShieldCheck, 
+  Database, 
+  UserCircle, 
+  Building2, 
+  Truck, 
+  Scale 
+} from 'lucide-react';
 import HomePage from './pages/HomePage';
 import NewLotPage from './pages/NewLotPage';
 import HandoverPage from './pages/HandoverPage';
@@ -8,17 +18,19 @@ import RecyclerPage from './pages/RecyclerPage';
 import SafetyPage from './pages/SafetyPage';
 import PriceBoardPage from './pages/PriceBoardPage';
 import DataExportPage from './pages/DataExportPage';
+import HubDashboardPage from './pages/HubDashboardPage';
+import ShipmentAggregationPage from './pages/ShipmentAggregationPage';
 import { db } from './lib/db';
 import { syncDataOnline } from './lib/supabase';
 
-type Role = 'COLLECTOR' | 'RECYCLER' | 'ADMIN';
+export type Role = 'COLLECTOR' | 'HUB' | 'RECYCLER' | 'ADMIN';
 
 interface RoleContextType {
   role: Role;
   setRole: (role: Role) => void;
 }
 
-const RoleContext = createContext<RoleContextType>({ role: 'COLLECTOR', setRole: () => {} });
+export const RoleContext = createContext<RoleContextType>({ role: 'COLLECTOR', setRole: () => {} });
 
 function RoleSwitcher() {
   const { role, setRole } = useContext(RoleContext);
@@ -28,24 +40,26 @@ function RoleSwitcher() {
     const newRole = e.target.value as Role;
     setRole(newRole);
     if (newRole === 'ADMIN') navigate('/data');
+    else if (newRole === 'HUB') navigate('/hub');
     else if (newRole === 'RECYCLER') navigate('/recycler');
     else navigate('/');
   };
 
   return (
-    <div className="bg-gray-800 text-white p-2 flex justify-between items-center text-xs z-50 relative">
+    <div className="bg-gray-800 text-white p-2.5 flex justify-between items-center text-xs z-50 relative shadow-sm">
       <div className="flex items-center">
-        <UserCircle size={14} className="mr-1" />
+        <UserCircle size={15} className="mr-1.5 text-blue-400" />
         <span className="font-semibold text-gray-300">Active Role:</span>
       </div>
       <select 
         value={role} 
         onChange={handleRoleChange}
-        className="bg-gray-700 border-none outline-none text-white rounded px-2 py-1 font-bold"
+        className="bg-gray-700 border-none outline-none text-white rounded-lg px-2.5 py-1 font-bold text-xs cursor-pointer"
       >
-        <option value="COLLECTOR">Informal Collector</option>
-        <option value="RECYCLER">Formal Recycler</option>
-        <option value="ADMIN">Govt / Admin</option>
+        <option value="COLLECTOR">Informal Collector (Kabadiwala)</option>
+        <option value="HUB">Collection Hub Operator</option>
+        <option value="RECYCLER">Formal Recycler (CPCB)</option>
+        <option value="ADMIN">Govt / Administrator</option>
       </select>
     </div>
   );
@@ -56,7 +70,7 @@ function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const { role } = useContext(RoleContext);
 
-  const isActive = (path: string) => location.pathname === path ? 'text-blue-600' : 'text-gray-500 hover:text-blue-600';
+  const isActive = (path: string) => location.pathname === path ? 'text-blue-600 font-bold' : 'text-gray-500 hover:text-blue-600';
 
   return (
     <div className="flex flex-col h-screen bg-[#F1F4EF] text-[#14213D] max-w-md mx-auto shadow-2xl relative">
@@ -67,26 +81,44 @@ function Layout({ children }: { children: React.ReactNode }) {
       </div>
       
       {/* Bottom Navigation (RBAC Controlled) */}
-      <div className="absolute bottom-0 w-full bg-white border-t border-gray-200 flex justify-around p-3 pb-6">
+      <div className="absolute bottom-0 w-full bg-white border-t border-gray-200 flex justify-around p-3 pb-6 z-40">
         
         {/* COLLECTOR NAV */}
         {role === 'COLLECTOR' && (
           <>
             <button onClick={() => navigate('/')} className={`flex flex-col items-center ${isActive('/')}`}>
-              <Home size={24} />
-              <span className="text-xs font-semibold mt-1">Home</span>
+              <Home size={22} />
+              <span className="text-[11px] font-semibold mt-1">My Loads</span>
             </button>
             <button onClick={() => navigate('/prices')} className={`flex flex-col items-center ${isActive('/prices')}`}>
-              <History size={24} />
-              <span className="text-xs font-semibold mt-1">Prices</span>
+              <History size={22} />
+              <span className="text-[11px] font-semibold mt-1">Prices</span>
             </button>
             <button onClick={() => navigate('/new')} className={`flex flex-col items-center ${isActive('/new')}`}>
-              <PlusSquare size={24} />
-              <span className="text-xs font-semibold mt-1">New Load</span>
+              <PlusSquare size={22} />
+              <span className="text-[11px] font-semibold mt-1">New Load</span>
             </button>
             <button onClick={() => navigate('/safety')} className={`flex flex-col items-center ${isActive('/safety')}`}>
-              <ShieldCheck size={24} />
-              <span className="text-xs font-semibold mt-1">Safety</span>
+              <ShieldCheck size={22} />
+              <span className="text-[11px] font-semibold mt-1">Safety</span>
+            </button>
+          </>
+        )}
+
+        {/* HUB OPERATOR NAV */}
+        {role === 'HUB' && (
+          <>
+            <button onClick={() => navigate('/hub')} className={`flex flex-col items-center ${isActive('/hub')}`}>
+              <Building2 size={22} />
+              <span className="text-[11px] font-semibold mt-1">Hub Intake</span>
+            </button>
+            <button onClick={() => navigate('/hub/shipments')} className={`flex flex-col items-center ${isActive('/hub/shipments')}`}>
+              <Truck size={22} />
+              <span className="text-[11px] font-semibold mt-1">Bulk Shipments</span>
+            </button>
+            <button onClick={() => navigate('/prices')} className={`flex flex-col items-center ${isActive('/prices')}`}>
+              <History size={22} />
+              <span className="text-[11px] font-semibold mt-1">Rate Card</span>
             </button>
           </>
         )}
@@ -95,16 +127,16 @@ function Layout({ children }: { children: React.ReactNode }) {
         {role === 'RECYCLER' && (
           <>
             <button onClick={() => navigate('/recycler')} className={`flex flex-col items-center ${isActive('/recycler')}`}>
-              <Home size={24} />
-              <span className="text-xs font-semibold mt-1">Dashboard</span>
+              <Scale size={22} />
+              <span className="text-[11px] font-semibold mt-1">Gate Intake</span>
             </button>
             <button onClick={() => navigate('/prices')} className={`flex flex-col items-center ${isActive('/prices')}`}>
-              <History size={24} />
-              <span className="text-xs font-semibold mt-1">Market Rates</span>
+              <History size={22} />
+              <span className="text-[11px] font-semibold mt-1">Market Rates</span>
             </button>
-            <button className={`flex flex-col items-center text-gray-500`}>
-              <QrCode size={24} />
-              <span className="text-xs font-semibold mt-1">Receive Hash</span>
+            <button onClick={() => navigate('/data')} className={`flex flex-col items-center ${isActive('/data')}`}>
+              <Database size={22} />
+              <span className="text-[11px] font-semibold mt-1">Audit Ledger</span>
             </button>
           </>
         )}
@@ -113,12 +145,16 @@ function Layout({ children }: { children: React.ReactNode }) {
         {role === 'ADMIN' && (
           <>
             <button onClick={() => navigate('/data')} className={`flex flex-col items-center ${isActive('/data')}`}>
-              <Database size={24} />
-              <span className="text-xs font-semibold mt-1">Intelligence</span>
+              <Database size={22} />
+              <span className="text-[11px] font-semibold mt-1">EPR Insights</span>
+            </button>
+            <button onClick={() => navigate('/hub')} className={`flex flex-col items-center ${isActive('/hub')}`}>
+              <Building2 size={22} />
+              <span className="text-[11px] font-semibold mt-1">Hubs</span>
             </button>
             <button onClick={() => navigate('/prices')} className={`flex flex-col items-center ${isActive('/prices')}`}>
-              <History size={24} />
-              <span className="text-xs font-semibold mt-1">Price Board</span>
+              <History size={22} />
+              <span className="text-[11px] font-semibold mt-1">Price Board</span>
             </button>
           </>
         )}
@@ -161,6 +197,8 @@ function App() {
             <Route path="/" element={<HomePage />} />
             <Route path="/new" element={<NewLotPage />} />
             <Route path="/handover/:id" element={<HandoverPage />} />
+            <Route path="/hub" element={<HubDashboardPage />} />
+            <Route path="/hub/shipments" element={<ShipmentAggregationPage />} />
             <Route path="/recycler" element={<RecyclerPage />} />
             <Route path="/safety" element={<SafetyPage />} />
             <Route path="/prices" element={<PriceBoardPage />} />
