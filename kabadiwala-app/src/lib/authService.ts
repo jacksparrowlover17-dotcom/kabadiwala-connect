@@ -8,7 +8,7 @@ import {
   ensureDemoData
 } from './db';
 
-const API_BASE = 'http://127.0.0.1:8000';
+const API_BASE = import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8000';
 const CURRENT_USER_KEY = 'kabadiwala_auth_session';
 
 export interface AuthSession {
@@ -150,6 +150,19 @@ export async function register(params: RegisterParams): Promise<AuthSession> {
   };
   await db.users.put(userAccount);
 
+  if (params.role === 'COLLECTOR') {
+    const cleanIdPart = userId.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || '7842';
+    const shortId = userId.startsWith('KAB-') ? userId : `KAB-${cleanIdPart}`;
+    await db.profile.put({
+      id: userId,
+      name: params.fullName.trim(),
+      collectorId: shortId,
+      location: 'Bangalore (Urban Area)',
+      phone: params.phone?.trim() || '',
+      updatedAt: Date.now(),
+    });
+  }
+
   let businessProfile: BusinessProfile | undefined;
   let verificationApplication: VerificationApplication | undefined;
 
@@ -251,6 +264,21 @@ export async function login(email: string, password: string): Promise<AuthSessio
         verificationStatus: data.verification_status,
         token: data.token,
       };
+      if (session.user?.role === 'COLLECTOR') {
+        const existing = await db.profile.get(session.user.id);
+        if (!existing) {
+          const cleanIdPart = session.user.id.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || '7842';
+          const shortId = session.user.id.startsWith('KAB-') ? session.user.id : `KAB-${cleanIdPart}`;
+          await db.profile.put({
+            id: session.user.id,
+            name: session.user.fullName || 'Collector',
+            collectorId: shortId,
+            location: 'Bangalore (Urban Area)',
+            phone: session.user.phone || '',
+            updatedAt: Date.now(),
+          });
+        }
+      }
       setCurrentSession(session);
       return session;
     }
@@ -281,6 +309,21 @@ export async function login(email: string, password: string): Promise<AuthSessio
     businessProfile,
     verificationStatus,
   };
+  if (user.role === 'COLLECTOR') {
+    const existing = await db.profile.get(user.id);
+    if (!existing) {
+      const cleanIdPart = user.id.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || '7842';
+      const shortId = user.id.startsWith('KAB-') ? user.id : `KAB-${cleanIdPart}`;
+      await db.profile.put({
+        id: user.id,
+        name: user.fullName || 'Collector',
+        collectorId: shortId,
+        location: 'Bangalore (Urban Area)',
+        phone: user.phone || '',
+        updatedAt: Date.now(),
+      });
+    }
+  }
   setCurrentSession(session);
   return session;
 }

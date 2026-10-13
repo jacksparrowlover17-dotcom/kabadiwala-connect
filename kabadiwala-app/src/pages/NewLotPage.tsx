@@ -99,6 +99,7 @@ export default function NewLotPage() {
         condition,
         photo: photoDataUrl || undefined,
         collectorId: profile.collectorId || collectorId,
+        collectorName: profile.name || 'Collector',
         status: 'PENDING',
         timestamp: Date.now(),
       });

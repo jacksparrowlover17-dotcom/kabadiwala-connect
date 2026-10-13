@@ -5,6 +5,7 @@ import {
   db, type CollectorProfile, type Lot,
   DEFAULT_PROFILE, getCollectorProfile, updateCollectorProfile, DEMO_HUBS
 } from '../lib/db';
+import { getCurrentSession } from '../lib/authService';
 import { requestLotPurchase, confirmLotPurchaseByCollector } from '../lib/hubService';
 import PurchaseReceiptModal from '../components/PurchaseReceiptModal';
 import {
@@ -42,10 +43,27 @@ function StatusBadge({ lot }: { lot: Lot }) {
 export default function HomePage() {
   const navigate = useNavigate();
   const [langIndex, setLangIndex] = useState(0);
-  const liveProfile = useLiveQuery(() => db.profile.get('current-user'));
-  const [profile, setProfile] = useState<CollectorProfile>(DEFAULT_PROFILE);
+  const session = getCurrentSession();
+  const activeUserId = session?.user?.id || 'current-user';
+  const liveProfile = useLiveQuery(() => db.profile.get(activeUserId), [activeUserId]);
+
+  const [profile, setProfile] = useState<CollectorProfile>(() => {
+    if (session?.user && session.user.role === 'COLLECTOR') {
+      const cleanIdPart = session.user.id.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || '7842';
+      const shortId = session.user.id.startsWith('KAB-') ? session.user.id : `KAB-${cleanIdPart}`;
+      return {
+        id: session.user.id,
+        name: session.user.fullName || 'Collector',
+        collectorId: shortId,
+        location: 'Bangalore (Urban Area)',
+        phone: session.user.phone || '',
+        updatedAt: Date.now(),
+      };
+    }
+    return DEFAULT_PROFILE;
+  });
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [editForm, setEditForm] = useState<CollectorProfile>(DEFAULT_PROFILE);
+  const [editForm, setEditForm] = useState<CollectorProfile>(profile);
   const [hubSelectLot, setHubSelectLot] = useState<Lot | null>(null);
   const [chosenHubId, setChosenHubId] = useState<string>(DEMO_HUBS[0].id);
   const [confirmingLot, setConfirmingLot] = useState<Lot | null>(null);
@@ -53,9 +71,16 @@ export default function HomePage() {
   const [lotTab, setLotTab] = useState<'ACTIVE' | 'HISTORY'>('ACTIVE');
 
   useEffect(() => {
-    if (liveProfile) { setProfile(liveProfile); setEditForm(liveProfile); }
-    else { getCollectorProfile().then(p => { setProfile(p); setEditForm(p); }); }
-  }, [liveProfile]);
+    if (liveProfile) {
+      setProfile(liveProfile);
+      setEditForm(liveProfile);
+    } else {
+      getCollectorProfile(activeUserId).then(p => {
+        setProfile(p);
+        setEditForm(p);
+      });
+    }
+  }, [liveProfile, activeUserId]);
 
   const allLots = useLiveQuery(() => db.lots.reverse().sortBy('timestamp'), []) || [];
   const hubs = useLiveQuery(() => db.hubs.toArray()) || DEMO_HUBS;
@@ -84,11 +109,11 @@ export default function HomePage() {
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     const updated = await updateCollectorProfile({
-      name: editForm.name.trim() || DEFAULT_PROFILE.name,
-      collectorId: editForm.collectorId.trim().toUpperCase() || DEFAULT_PROFILE.collectorId,
-      location: editForm.location.trim() || DEFAULT_PROFILE.location,
-      phone: editForm.phone?.trim() || DEFAULT_PROFILE.phone,
-    });
+      name: editForm.name.trim() || profile.name || DEFAULT_PROFILE.name,
+      collectorId: editForm.collectorId.trim().toUpperCase() || profile.collectorId || DEFAULT_PROFILE.collectorId,
+      location: editForm.location.trim() || profile.location || DEFAULT_PROFILE.location,
+      phone: editForm.phone?.trim() || profile.phone || DEFAULT_PROFILE.phone,
+    }, activeUserId);
     setProfile(updated);
     setIsEditModalOpen(false);
   };
@@ -104,13 +129,18 @@ export default function HomePage() {
     catch (err: any) { alert(err.message || 'Failed to confirm price.'); }
   };
 
+  const displayName = profile.name || session?.user?.fullName || 'Collector';
+  const displayFirstName = displayName.trim().split(' ')[0] || 'Collector';
+  const displayCollectorId = profile.collectorId || (session?.user?.id ? (session.user.id.startsWith('KAB-') ? session.user.id : `KAB-${session.user.id.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase()}`) : 'KAB-COLLECTOR');
+  const displayLocation = profile.location || 'Bangalore (Urban Area)';
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-5 space-y-5 pb-28 sm:pb-12">
 
       {/* ─── Greeting Bar ─────────────────────────────── */}
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-2xl font-black text-[#1f2937]">{currentLang.greeting}, {profile.name.split(' ')[0]}</p>
+          <p className="text-2xl font-black text-[#1f2937]">{currentLang.greeting}, {displayFirstName}</p>
           <p className="text-sm text-[#64748b] mt-0.5">{currentLang.sub}</p>
         </div>
         <div className="flex items-center gap-2">
@@ -153,13 +183,13 @@ export default function HomePage() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <p className="font-bold text-[#1f2937] text-sm truncate">{profile.name}</p>
-              <span className="badge badge-neutral font-mono">{profile.collectorId}</span>
+              <p className="font-bold text-[#1f2937] text-sm truncate">{displayName}</p>
+              <span className="badge badge-neutral font-mono">{displayCollectorId}</span>
               <span className="text-sm">{tier.icon}</span>
               <span className="text-[11px] font-semibold" style={{color: tier.color}}>{tier.name}</span>
             </div>
             <p className="text-xs text-[#64748b] flex items-center gap-1 mt-0.5 truncate">
-              <MapPin size={11}/>{profile.location}
+              <MapPin size={11}/>{displayLocation}
             </p>
           </div>
           <button onClick={() => setIsEditModalOpen(true)}

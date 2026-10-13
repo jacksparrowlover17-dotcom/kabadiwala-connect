@@ -35,7 +35,8 @@ const STATUS_LABELS: Record<string, string> = {
 export default function MyHandoversPage() {
   const navigate = useNavigate();
   const session = getCurrentSession();
-  const collectorId = (session?.user as any)?.collectorId || DEFAULT_PROFILE.collectorId;
+  const defaultShortId = session?.user?.id ? (session.user.id.startsWith('KAB-') ? session.user.id : `KAB-${session.user.id.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase()}`) : DEFAULT_PROFILE.collectorId;
+  const collectorId = (session?.user as any)?.collectorId || defaultShortId;
 
   const [handovers, setHandovers] = useState<HandoverRequest[]>([]);
   const [loading, setLoading] = useState(true);

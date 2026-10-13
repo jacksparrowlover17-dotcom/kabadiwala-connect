@@ -968,11 +968,48 @@ export async function ensureDemoData(): Promise<void> {
 }
 
 /**
- * Retrieves the current collector demo profile or initializes it with defaults.
+ * Reads active session user from localStorage without circular dependencies.
  */
-export async function getCollectorProfile(): Promise<CollectorProfile> {
-  const existing = await db.profile.get('current-user');
+function getActiveSessionUser(): { id: string; fullName: string; phone?: string; role: string } | null {
+  try {
+    const raw = localStorage.getItem('kabadiwala_session_v4');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.user || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Retrieves the current collector profile for the logged in user or initializes it with safe defaults.
+ */
+export async function getCollectorProfile(userId?: string): Promise<CollectorProfile> {
+  const sessionUser = getActiveSessionUser();
+  const activeId = userId || sessionUser?.id || 'current-user';
+
+  const existing = await db.profile.get(activeId);
   if (existing) return existing;
+
+  // If user is authenticated as a collector, generate a personalized profile
+  if (sessionUser && (!userId || userId === sessionUser.id)) {
+    const cleanIdPart = sessionUser.id.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || '7842';
+    const shortId = sessionUser.id.startsWith('KAB-') ? sessionUser.id : `KAB-${cleanIdPart}`;
+    const userProfile: CollectorProfile = {
+      id: sessionUser.id,
+      name: sessionUser.fullName || 'Collector',
+      collectorId: shortId,
+      location: 'Bangalore (Urban Area)',
+      phone: sessionUser.phone || '',
+      updatedAt: Date.now(),
+    };
+    await db.profile.put(userProfile);
+    return userProfile;
+  }
+
+  // Demo fallback
+  const demo = await db.profile.get('current-user');
+  if (demo) return demo;
   await db.profile.put(DEFAULT_PROFILE);
   return DEFAULT_PROFILE;
 }
@@ -980,12 +1017,12 @@ export async function getCollectorProfile(): Promise<CollectorProfile> {
 /**
  * Persists updates to the local collector profile.
  */
-export async function updateCollectorProfile(profileData: Partial<CollectorProfile>): Promise<CollectorProfile> {
-  const current = await getCollectorProfile();
+export async function updateCollectorProfile(profileData: Partial<CollectorProfile>, userId?: string): Promise<CollectorProfile> {
+  const current = await getCollectorProfile(userId);
   const updated: CollectorProfile = {
     ...current,
     ...profileData,
-    id: 'current-user',
+    id: current.id,
     updatedAt: Date.now(),
   };
   await db.profile.put(updated);

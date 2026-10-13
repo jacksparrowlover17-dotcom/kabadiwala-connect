@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Compass, MapPin, Navigation, Building2, Scale, Truck, CheckCircle2,
@@ -40,6 +41,8 @@ export default function DestinationFinderPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const session = getCurrentSession();
+  const activeUserId = session?.user?.id || 'current-user';
+  const profile = useLiveQuery(() => db.profile.get(activeUserId), [activeUserId]);
 
   // URL query params
   const paramLotId = searchParams.get('lotId') || '';
@@ -172,9 +175,10 @@ export default function DestinationFinderPage() {
     setSubmittingBooking(true);
     setBookingError(null);
 
-    const collectorId = (session?.user as any)?.collectorId || DEFAULT_PROFILE.collectorId;
-    const collectorName = session?.user?.fullName || DEFAULT_PROFILE.name;
-    const collectorLocation = selectedArea || DEFAULT_PROFILE.location;
+    const sessionCollectorId = session?.user?.id ? (session.user.id.startsWith('KAB-') ? session.user.id : `KAB-${session.user.id.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase()}`) : DEFAULT_PROFILE.collectorId;
+    const collectorId = (session?.user as any)?.collectorId || profile?.collectorId || sessionCollectorId;
+    const collectorName = profile?.name || session?.user?.fullName || DEFAULT_PROFILE.name;
+    const collectorLocation = selectedArea || profile?.location || DEFAULT_PROFILE.location;
 
     const res = await requestHandoverQuote({
       lotId,
@@ -406,7 +410,7 @@ export default function DestinationFinderPage() {
 
             {locationMode === 'PROFILE' && (
               <p className="text-xs text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-200">
-                Registered Base: <strong>{DEFAULT_PROFILE.location}</strong>
+                Registered Base: <strong>{profile?.location || DEFAULT_PROFILE.location}</strong>
               </p>
             )}
 

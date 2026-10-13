@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Recycler, DEFAULT_PROFILE } from '../lib/db';
+import { getCurrentSession } from '../lib/authService';
 import { generateHandoverCode } from '../lib/hash';
 import { 
   CheckCircle2, 
@@ -27,7 +28,9 @@ export default function HandoverPage() {
   const navigate = useNavigate();
   const lot = useLiveQuery(() => db.lots.get(id as string), [id]);
   const recyclers = useLiveQuery(() => db.recyclers.toArray(), []) || [];
-  const profile = useLiveQuery(() => db.profile.get('current-user'));
+  const session = getCurrentSession();
+  const activeUserId = session?.user?.id || 'current-user';
+  const profile = useLiveQuery(() => db.profile.get(activeUserId), [activeUserId]);
   
   const [selectedRecyclerId, setSelectedRecyclerId] = useState<string | null>(null);
   const [selectedRecycler, setSelectedRecycler] = useState<Recycler | null>(null);
@@ -69,8 +72,9 @@ export default function HandoverPage() {
   const carbonPoints = Math.floor(parseFloat(lot.weight) * 10);
   const manifestId = `KAB-PROTO-MNF-${(lot.id || '0000').slice(0, 8).toUpperCase()}`;
   
-  const collectorId = lot.collectorId || profile?.collectorId || DEFAULT_PROFILE.collectorId;
-  const collectorName = profile?.name || DEFAULT_PROFILE.name;
+  const defaultShortId = session?.user?.id ? (session.user.id.startsWith('KAB-') ? session.user.id : `KAB-${session.user.id.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase()}`) : DEFAULT_PROFILE.collectorId;
+  const collectorId = lot.collectorId || profile?.collectorId || defaultShortId;
+  const collectorName = lot.collectorName || profile?.name || session?.user?.fullName || DEFAULT_PROFILE.name;
   const collectorLocation = profile?.location || DEFAULT_PROFILE.location;
 
   const handleCompleteHandover = async () => {
