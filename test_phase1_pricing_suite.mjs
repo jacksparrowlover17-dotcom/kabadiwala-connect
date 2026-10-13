@@ -9,8 +9,9 @@
  */
 
 const BASE = process.env.BACKEND_URL || 'http://localhost:8000';
-const ADMIN_HEADERS = { 'Content-Type': 'application/json', 'X-User-Role': 'ADMIN', 'X-User-Name': 'Test Admin' };
-const HUB_HEADERS   = { 'Content-Type': 'application/json', 'X-User-Role': 'HUB',   'X-User-Name': 'Test Hub',   'X-Hub-Id': 'HUB-TEST-001' };
+let ADMIN_HEADERS = { 'Content-Type': 'application/json' };
+let HUB_HEADERS   = { 'Content-Type': 'application/json' };
+let COLLECTOR_HEADERS = { 'Content-Type': 'application/json' };
 
 let passed = 0, failed = 0, skipped = 0;
 const results = [];
@@ -42,16 +43,70 @@ async function tryFetch(url, opts = {}) {
   }
 }
 
-// ─── 0. Health Check ──────────────────────────────────────────────────────────
+// ─── 0. Health Check & Authentication Setup ─────────────────────────────────────
 console.log('\n═══════════════════════════════════════════════════════');
 console.log(' Kabadiwala Connect — Phase 1 Pricing Test Suite');
 console.log('═══════════════════════════════════════════════════════');
 console.log(`\nTarget backend: ${BASE}\n`);
 
-console.log('── 0. Backend Health Check');
+console.log('── 0. Backend Health Check & JWT Authentication');
 const health = await tryFetch(`${BASE}/`);
 const backendOnline = health.ok;
 ok('Backend root / returns 200 (health check)', health.ok, `status=${health.status}`);
+
+let adminToken = null;
+let hubToken = null;
+let collectorToken = null;
+
+if (backendOnline) {
+  // Login as seeded Admin
+  const adminLogin = await tryFetch(`${BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'admin@kabadiwala.in', password: 'Admin@123' })
+  });
+  if (adminLogin.ok && adminLogin.body?.token) {
+    adminToken = adminLogin.body.token;
+    ADMIN_HEADERS = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${adminToken}` };
+    ok('Admin JWT token obtained successfully', true);
+  } else {
+    ok('Admin JWT token obtained successfully', false, JSON.stringify(adminLogin.body));
+  }
+
+  // Login as seeded Hub
+  const hubLogin = await tryFetch(`${BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'hub.east@kabadiwala.in', password: 'Hub@123' })
+  });
+  if (hubLogin.ok && hubLogin.body?.token) {
+    hubToken = hubLogin.body.token;
+    HUB_HEADERS = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${hubToken}` };
+    ok('Hub JWT token obtained successfully', true);
+  } else {
+    ok('Hub JWT token obtained successfully', false, JSON.stringify(hubLogin.body));
+  }
+
+  // Register or login a test Collector
+  const collectorReg = await tryFetch(`${BASE}/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: `collector_pricing_${Date.now()}@test.com`,
+      fullName: 'Pricing Test Collector',
+      phone: '9800098000',
+      password: 'Password123!',
+      role: 'COLLECTOR'
+    })
+  });
+  if (collectorReg.ok && collectorReg.body?.token) {
+    collectorToken = collectorReg.body.token;
+    COLLECTOR_HEADERS = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${collectorToken}` };
+    ok('Collector JWT token obtained successfully', true);
+  } else {
+    ok('Collector JWT token obtained successfully', false, JSON.stringify(collectorReg.body));
+  }
+}
 
 // ─── 1. Indicative Price CRUD (Admin) ─────────────────────────────────────────
 console.log('\n── 1. Admin — Indicative Price CRUD');
@@ -224,9 +279,9 @@ if (!backendOnline) {
   // Re-create a fresh active offer for transaction test
   const freshOffer = await tryFetch(`${BASE}/hub/offers`, {
     method: 'POST',
-    headers: { ...HUB_HEADERS, 'X-Hub-Id': 'HUB-TEST-002' },
+    headers: HUB_HEADERS,
     body: JSON.stringify({
-      hub_id: 'HUB-TEST-002', hub_name: 'Snapshot Test Hub',
+      hub_id: 'HUB-BLR-01', hub_name: 'Snapshot Test Hub',
       hub_verification_status: 'approved', material: 'Mobile Phones',
       grade: 'Working Smartphones', rate: 1200, unit: 'kg',
       min_quantity_kg: 1, supported_services: ['DROP_OFF'],
@@ -239,12 +294,10 @@ if (!backendOnline) {
     const offerId = freshOffer.body.hub_offer.id;
     const txn = await tryFetch(`${BASE}/prices/transaction`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-User-Role': 'COLLECTOR', 'X-Collector-Id': 'KAB-TEST-001' },
+      headers: COLLECTOR_HEADERS,
       body: JSON.stringify({
         offer_id: offerId,
         lot_id: 'LOT-TEST-' + Date.now().toString(36).toUpperCase(),
-        collector_id: 'KAB-TEST-001',
-        collector_name: 'Test Kabadiwala',
         estimated_quantity_kg: 8,
         service_type: 'DROP_OFF',
       }),
@@ -273,17 +326,24 @@ if (!backendOnline) {
 } else {
   const collectorCreatePrice = await tryFetch(`${BASE}/admin/prices/indicative`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-User-Role': 'COLLECTOR' },
+    headers: COLLECTOR_HEADERS,
     body: JSON.stringify({ material: 'Copper Cables', grade: 'Test', min_price: 100, max_price: 200, unit: 'kg', location: 'Test', source_name: '', source_date: '2026-10-01', effective_date: '2026-10-01', expiry_date: '2026-12-31', status: 'published', is_sample: true }),
   });
-  ok('Collector cannot call admin create price (403)', !collectorCreatePrice.ok && collectorCreatePrice.status === 403, `status=${collectorCreatePrice.status}`);
+  ok('Collector token cannot call admin create price (403 Forbidden)', !collectorCreatePrice.ok && collectorCreatePrice.status === 403, `status=${collectorCreatePrice.status}`);
 
-  const noRoleCreateOffer = await tryFetch(`${BASE}/hub/offers`, {
+  const noTokenCreateOffer = await tryFetch(`${BASE}/hub/offers`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ hub_id: 'X', hub_name: 'X', hub_verification_status: 'approved', material: 'Copper Cables', grade: 'X', rate: 100, unit: 'kg', min_quantity_kg: 5, supported_services: ['DROP_OFF'], pickup_fee: 0, applicable_area: 'X', valid_from: '2026-10-13', valid_till: '2026-11-30', status: 'active' }),
   });
-  ok('No X-User-Role header rejects hub offer creation (403/422)', !noRoleCreateOffer.ok && (noRoleCreateOffer.status === 403 || noRoleCreateOffer.status === 422), `status=${noRoleCreateOffer.status}`);
+  ok('Missing Bearer token rejects hub offer creation (401 Unauthorized)', !noTokenCreateOffer.ok && noTokenCreateOffer.status === 401, `status=${noTokenCreateOffer.status}`);
+
+  const badTokenCreateOffer = await tryFetch(`${BASE}/hub/offers`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer bad_tampered_token' },
+    body: JSON.stringify({ hub_id: 'X', hub_name: 'X', hub_verification_status: 'approved', material: 'Copper Cables', grade: 'X', rate: 100, unit: 'kg', min_quantity_kg: 5, supported_services: ['DROP_OFF'], pickup_fee: 0, applicable_area: 'X', valid_from: '2026-10-13', valid_till: '2026-11-30', status: 'active' }),
+  });
+  ok('Invalid Bearer token rejects hub offer creation (401 Unauthorized)', !badTokenCreateOffer.ok && badTokenCreateOffer.status === 401, `status=${badTokenCreateOffer.status}`);
 }
 
 // ─── 6. Offline Fallback Logic ─────────────────────────────────────────────────

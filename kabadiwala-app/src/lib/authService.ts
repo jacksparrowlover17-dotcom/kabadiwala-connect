@@ -71,6 +71,18 @@ export function getCurrentSession(): AuthSession | null {
 }
 
 /**
+ * Constructs request headers including Authorization Bearer token from the active session.
+ */
+export function getAuthHeaders(extraHeaders: Record<string, string> = {}): Record<string, string> {
+  const session = getCurrentSession();
+  const headers: Record<string, string> = { ...extraHeaders };
+  if (session?.token) {
+    headers['Authorization'] = `Bearer ${session.token}`;
+  }
+  return headers;
+}
+
+/**
  * Saves current authenticated session.
  */
 export function setCurrentSession(session: AuthSession | null): void {
@@ -208,6 +220,7 @@ export async function register(params: RegisterParams): Promise<AuthSession> {
     user: userAccount,
     businessProfile,
     verificationStatus: businessProfile ? 'pending_verification' : 'active',
+    token: backendData?.token,
   };
   setCurrentSession(session);
   return session;
@@ -333,7 +346,7 @@ export async function resubmitVerification(params: ApplyVerificationParams): Pro
   try {
     await fetch(`${API_BASE}/verification/apply`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(params),
     });
   } catch (e) {
@@ -377,7 +390,7 @@ export async function getAdminApplicationsQueue(filters?: {
   // Try backend first
   try {
     const res = await fetch(`${API_BASE}/admin/applications`, {
-      headers: { 'X-User-Role': 'ADMIN' }
+      headers: getAuthHeaders(),
     });
     if (res.ok) {
       const data = await res.json();
@@ -466,7 +479,7 @@ export async function reviewApplicationAsAdmin(params: {
   try {
     await fetch(`${API_BASE}/admin/applications/${params.applicationId}/review`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-User-Role': 'ADMIN' },
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(params),
     });
   } catch (e) {

@@ -6,7 +6,7 @@ import {
   DEMO_INDICATIVE_PRICES,
   DEMO_HUB_BUYING_OFFERS
 } from './db';
-import { getCurrentSession } from './authService';
+import { getCurrentSession, getAuthHeaders } from './authService';
 
 const API_BASE = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
 
@@ -116,11 +116,9 @@ export async function createIndicativePrice(
   try {
     const res = await fetch(`${API_BASE}/admin/prices/indicative`, {
       method: 'POST',
-      headers: {
+      headers: getAuthHeaders({
         'Content-Type': 'application/json',
-        'X-User-Role': 'ADMIN',
-        'X-User-Name': adminName,
-      },
+      }),
       body: JSON.stringify({
         material: data.material,
         grade: data.grade,
@@ -196,11 +194,9 @@ export async function updateIndicativePrice(
   try {
     const res = await fetch(`${API_BASE}/admin/prices/indicative/${priceId}`, {
       method: 'PUT',
-      headers: {
+      headers: getAuthHeaders({
         'Content-Type': 'application/json',
-        'X-User-Role': 'ADMIN',
-        'X-User-Name': adminName,
-      },
+      }),
       body: JSON.stringify({
         min_price: data.minPrice,
         max_price: data.maxPrice,
@@ -264,10 +260,9 @@ export async function setIndicativePriceStatus(
   try {
     const res = await fetch(`${API_BASE}/admin/prices/indicative/${priceId}/status`, {
       method: 'POST',
-      headers: {
+      headers: getAuthHeaders({
         'Content-Type': 'application/json',
-        'X-User-Role': 'ADMIN',
-      },
+      }),
       body: JSON.stringify({ status }),
     });
     if (res.ok) {
@@ -362,11 +357,9 @@ export async function createHubOffer(
   try {
     const res = await fetch(`${API_BASE}/hub/offers`, {
       method: 'POST',
-      headers: {
+      headers: getAuthHeaders({
         'Content-Type': 'application/json',
-        'X-User-Role': 'HUB',
-        'X-Hub-Id': authenticatedHubId,
-      },
+      }),
       body: JSON.stringify({
         hub_id: authenticatedHubId,
         hub_name: data.hubName,
@@ -431,16 +424,14 @@ export async function createHubOffer(
 export async function setHubOfferStatus(
   offerId: string,
   status: 'active' | 'withdrawn' | 'expired',
-  authenticatedHubId: string
+  _authenticatedHubId?: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const res = await fetch(`${API_BASE}/hub/offers/${offerId}/status`, {
       method: 'POST',
-      headers: {
+      headers: getAuthHeaders({
         'Content-Type': 'application/json',
-        'X-User-Role': 'HUB',
-        'X-Hub-Id': authenticatedHubId,
-      },
+      }),
       body: JSON.stringify({ status }),
     });
     if (res.ok) {
@@ -636,7 +627,7 @@ export async function initiatePricingTransaction(
   try {
     const res = await fetch(`${API_BASE}/pricing/transactions/initiate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         offer_id: offerId,
         lot_id: lotId,
@@ -706,7 +697,7 @@ export async function recordScaleIntake(
   try {
     const res = await fetch(`${API_BASE}/pricing/transactions/${txId}/intake`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         actual_weight: actualWeight,
         agreed_rate: agreedRate,
@@ -763,7 +754,7 @@ export async function approveRevisedIntake(
   try {
     const res = await fetch(`${API_BASE}/pricing/transactions/${txId}/collector-approval`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ collector_approved: collectorApproved }),
     });
 
@@ -794,7 +785,7 @@ export async function settleTransactionPayment(
   try {
     const res = await fetch(`${API_BASE}/pricing/transactions/${txId}/settle-payment`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ payment_reference: paymentReference }),
     });
 

@@ -200,14 +200,48 @@ async function runTests() {
   console.log('\n--- 6. Quote Request & Manifest Code Generation ---');
   const uniqueLotId = `LOT-EXP-${Date.now().toString().slice(-6)}`;
   let createdHandoverId = null;
+  let collectorToken = null;
+  let collectorId = 'KAB-7842';
+  let hubToken = null;
 
   try {
-    const res = await fetch(`${BACKEND_URL}/handovers/quote-request`, {
+    // Authenticate collector
+    const regRes = await fetch(`${BACKEND_URL}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        email: `dest_collector_${Date.now()}@test.com`,
+        fullName: 'Ramu Kabadiwala',
+        phone: '+91 98450 78421',
+        password: 'Password123!',
+        role: 'COLLECTOR'
+      })
+    });
+    const regData = await regRes.json();
+    collectorToken = regData.token;
+    collectorId = regData.user.id;
+
+    // Authenticate hub
+    const hubLogin = await fetch(`${BACKEND_URL}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'hub.east@kabadiwala.in',
+        password: 'Hub@123'
+      })
+    });
+    const hubData = await hubLogin.json();
+    hubToken = hubData.token;
+
+    const res = await fetch(`${BACKEND_URL}/handovers/quote-request`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${collectorToken}`
+      },
+      body: JSON.stringify({
         lot_id: uniqueLotId,
-        collector_id: 'KAB-7842',
+        collector_id: collectorId,
         collector_name: 'Ramu Kabadiwala',
         collector_location: 'BTM Layout, Ward 152',
         collector_phone: '+91 98450 78421',
@@ -241,10 +275,13 @@ async function runTests() {
   try {
     const resConflict = await fetch(`${BACKEND_URL}/handovers/quote-request`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${collectorToken}`
+      },
       body: JSON.stringify({
         lot_id: uniqueLotId, // Duplicate active lot booking attempt!
-        collector_id: 'KAB-7842',
+        collector_id: collectorId,
         destination_id: 'HUB-BLR-02',
         material: 'Circuit Boards (PCB)',
         estimated_weight: 20.0,
@@ -267,6 +304,9 @@ async function runTests() {
     // 8a. Accept Quote
     const resAccept = await fetch(`${BACKEND_URL}/handovers/${createdHandoverId}/accept`, {
       method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${collectorToken}`
+      }
     });
     assert(resAccept.status === 200, 'Handover quote accepted successfully');
     const dataAccept = await resAccept.json();
@@ -275,7 +315,10 @@ async function runTests() {
     // 8b. Physical Intake at Facility Scale (Recalculate with actual weight 22.5 kg, ₹50 tare deduction)
     const resIntake = await fetch(`${BACKEND_URL}/handovers/${createdHandoverId}/status`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${hubToken}`
+      },
       body: JSON.stringify({
         status: 'completed',
         actual_weight: 22.5,
@@ -303,8 +346,12 @@ async function runTests() {
   // -------------------------------------------------------------
   console.log('\n--- 9. Collector Handover Manifests Retrieval ---');
   try {
-    const res = await fetch(`${BACKEND_URL}/handovers/collector/KAB-7842`);
-    assert(res.status === 200, 'GET /handovers/collector/KAB-7842 returned 200 OK');
+    const res = await fetch(`${BACKEND_URL}/handovers/collector/${collectorId}`, {
+      headers: {
+        'Authorization': `Bearer ${collectorToken}`
+      }
+    });
+    assert(res.status === 200, `GET /handovers/collector/${collectorId} returned 200 OK`);
     const data = await res.json();
     assert(Array.isArray(data.handovers) && data.handovers.length > 0, 'Collector manifests array returned');
     const found = data.handovers.find(h => h.id === createdHandoverId);

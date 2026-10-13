@@ -41,7 +41,8 @@ async function runTests() {
 
   // --- 2. Public Collector Registration ---
   const collectorEmail = `collector_${Date.now()}@test.com`;
-  await test('Public registration of informal COLLECTOR creates active account', async () => {
+  let collectorToken = null;
+  await test('Public registration of informal COLLECTOR creates active account with JWT token', async () => {
     const res = await fetch(`${API_BASE}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -57,6 +58,8 @@ async function runTests() {
     const data = await res.json();
     assert.strictEqual(data.user.role, 'COLLECTOR');
     assert.strictEqual(data.verification_status, 'active');
+    assert.ok(data.token, 'Must return JWT token');
+    collectorToken = data.token;
   });
 
   // --- 3. Duplicate Email Prevention ---
@@ -81,6 +84,7 @@ async function runTests() {
   let hubProfileId = null;
   let hubAppId = null;
   let hubUserId = null;
+  let hubToken = null;
   await test('Public registration of HUB creates business profile in pending_verification', async () => {
     const res = await fetch(`${API_BASE}/auth/register`, {
       method: 'POST',
@@ -104,9 +108,11 @@ async function runTests() {
     assert.strictEqual(data.verification_status, 'pending_verification');
     assert.ok(data.business_profile);
     assert.strictEqual(data.business_profile.status, 'pending_verification');
+    assert.ok(data.token, 'Must return JWT token');
     hubProfileId = data.business_profile.id;
     hubAppId = data.verification_application.id;
     hubUserId = data.user.id;
+    hubToken = data.token;
   });
 
   // --- 5. Formal Recycler Registration & Pending Verification ---
@@ -114,6 +120,7 @@ async function runTests() {
   let recProfileId = null;
   let recAppId = null;
   let recUserId = null;
+  let recToken = null;
   await test('Public registration of FORMAL RECYCLER creates pending verification with CPCB details', async () => {
     const res = await fetch(`${API_BASE}/auth/register`, {
       method: 'POST',
@@ -138,25 +145,45 @@ async function runTests() {
     assert.strictEqual(data.verification_status, 'pending_verification');
     const cpcbVal = data.business_profile.cpcbRegistrationNumber || data.business_profile.cpcb_registration_number;
     assert.strictEqual(cpcbVal, 'CPCB/EPR-2024/REC-401');
+    assert.ok(data.token, 'Must return JWT token');
     recProfileId = data.business_profile.id;
     recAppId = data.verification_application.id;
     recUserId = data.user.id;
+    recToken = data.token;
+  });
+
+  // Authenticate Admin
+  let adminToken = null;
+  await test('Admin signs in to receive signed Administrator token', async () => {
+    const res = await fetch(`${API_BASE}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'admin@kabadiwala.in',
+        password: 'Admin@123'
+      })
+    });
+    assert.strictEqual(res.status, 200, `Expected 200, got ${res.status}`);
+    const data = await res.json();
+    assert.strictEqual(data.user.role, 'ADMIN');
+    assert.ok(data.token, 'Admin token required');
+    adminToken = data.token;
   });
 
   // --- 6. Non-Admin Access to Review Queue Blocked ---
-  await test('Non-admin users cannot access administrative review endpoints (403)', async () => {
+  await test('Collector Bearer token cannot access administrative review endpoints (403)', async () => {
     const res = await fetch(`${API_BASE}/admin/applications`, {
-      headers: { 'X-User-Role': 'COLLECTOR' }
+      headers: { 'Authorization': `Bearer ${collectorToken}` }
     });
     assert.strictEqual(res.status, 403, `Expected status 403, got ${res.status}`);
     const data = await res.json();
-    assert.ok(data.detail.includes('Administrator role required'));
+    assert.ok(data.detail.includes('not authorized'));
   });
 
   // --- 7. Admin Queue Lists Pending Applications ---
-  await test('Admin with X-User-Role: ADMIN can list applications in queue', async () => {
+  await test('Admin with valid Bearer token can list applications in queue', async () => {
     const res = await fetch(`${API_BASE}/admin/applications`, {
-      headers: { 'X-User-Role': 'ADMIN' }
+      headers: { 'Authorization': `Bearer ${adminToken}` }
     });
     assert.strictEqual(res.status, 200, `Expected 200, got ${res.status}`);
     const data = await res.json();
@@ -169,7 +196,10 @@ async function runTests() {
   await test('Admin review without reason on request_changes is rejected (400)', async () => {
     const res = await fetch(`${API_BASE}/admin/applications/${hubAppId}/review`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-User-Role': 'ADMIN' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${adminToken}`
+      },
       body: JSON.stringify({
         action: 'request_changes',
         reason: '' // Missing mandatory reason
@@ -184,7 +214,10 @@ async function runTests() {
   await test('Admin successfully sets changes_requested with mandatory reason', async () => {
     const res = await fetch(`${API_BASE}/admin/applications/${hubAppId}/review`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-User-Role': 'ADMIN' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${adminToken}`
+      },
       body: JSON.stringify({
         action: 'request_changes',
         reason: 'Missing fire department NOC and updated weigh scale calibration certificate.'
@@ -202,7 +235,10 @@ async function runTests() {
   await test('Resubmitting updated application sets status to under_review, NOT auto-approved', async () => {
     const res = await fetch(`${API_BASE}/verification/apply`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${hubToken}`
+      },
       body: JSON.stringify({
         userId: hubUserId,
         role: 'HUB',
@@ -224,7 +260,10 @@ async function runTests() {
   await test('Admin approves Hub with official registry reference', async () => {
     const res = await fetch(`${API_BASE}/admin/applications/${hubAppId}/review`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-User-Role': 'ADMIN' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${adminToken}`
+      },
       body: JSON.stringify({
         action: 'approve',
         officialRegistryRef: 'CPCB/HUB-GRANT/BLR-2024/099',
@@ -253,7 +292,10 @@ async function runTests() {
   await test('Admin approves Recycler scoped strictly to Circuit Boards (PCB)', async () => {
     const res = await fetch(`${API_BASE}/admin/applications/${recAppId}/review`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-User-Role': 'ADMIN' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${adminToken}`
+      },
       body: JSON.stringify({
         action: 'approve',
         officialRegistryRef: 'CPCB/REC-AUTH/2024/401'
@@ -267,7 +309,7 @@ async function runTests() {
   // --- 14. Immutable Audit Ledger Logged Decision ---
   await test('Admin decisions are logged to immutable audit ledger', async () => {
     const res = await fetch(`${API_BASE}/admin/audit-logs`, {
-      headers: { 'X-User-Role': 'ADMIN' }
+      headers: { 'Authorization': `Bearer ${adminToken}` }
     });
     assert.strictEqual(res.status, 200);
     const data = await res.json();
@@ -280,7 +322,10 @@ async function runTests() {
   await test('Admin can suspend an approved business with mandatory reason', async () => {
     const res = await fetch(`${API_BASE}/admin/applications/${hubAppId}/review`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-User-Role': 'ADMIN' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${adminToken}`
+      },
       body: JSON.stringify({
         action: 'suspend',
         reason: 'Temporary regulatory freeze for safety protocol audit.'

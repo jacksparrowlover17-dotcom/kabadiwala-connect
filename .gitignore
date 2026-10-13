@@ -54,3 +54,10 @@ yarn-error.log*
 # OS
 .DS_Store
 Thumbs.db
+
+# Databases & local uploads
+*.db
+*.sqlite
+*.sqlite3
+uploads/
+kabadiwala-backend/uploads/

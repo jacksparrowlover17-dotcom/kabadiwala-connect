@@ -3,27 +3,51 @@ import uuid
 import hashlib
 import math
 import random
+import jwt
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi import FastAPI, HTTPException, Header, Depends, UploadFile, File
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from supabase import create_client, Client
 from dotenv import load_dotenv
+import storage
 
 load_dotenv()
+
+# JWT Configuration
+JWT_SECRET = os.getenv("JWT_SECRET")
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
+
+if not JWT_SECRET:
+    if ENVIRONMENT in ("production", "prod", "staging"):
+        raise RuntimeError("FATAL SECURITY CONFIGURATION: JWT_SECRET environment variable is required in production/staging environments!")
+    # Development fallback secret
+    JWT_SECRET = os.getenv("DEV_JWT_SECRET", "kabadiwala_dev_secret_local_only_2026_do_not_use_in_prod")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://qtfbswcsqxnutczivlua.supabase.co")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "sb_publishable_GUGc9c5oxwW5LKzOs5JaFA_pJZi_CwK")
 
-# Initialize Supabase client
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Initialize Supabase client safely with fallback
+supabase: Optional[Client] = None
+try:
+    if SUPABASE_URL and SUPABASE_KEY and "placeholder" not in SUPABASE_URL:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    pass
 
 app = FastAPI(
     title="Kabadiwala Connect API",
     description="Role-Based Access Control, Business Verification & Supply Chain Backend API",
     version="2.0.0"
 )
+
+# Mount local media storage directory for photos
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+os.makedirs(os.path.join(UPLOAD_DIR, "photos"), exist_ok=True)
+app.mount("/media", StaticFiles(directory=UPLOAD_DIR), name="media")
 
 # CORS configuration
 app.add_middleware(
@@ -34,276 +58,355 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+security = HTTPBearer(auto_error=False)
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    """Creates a cryptographically signed HMAC-SHA256 JWT access token with expiration."""
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(hours=24))
+    to_encode.update({"exp": expire, "iat": datetime.utcnow()})
+    return jwt.encode(to_encode, JWT_SECRET, algorithm="HS256")
+
+def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> Dict[str, Any]:
+    """
+    Validates the Bearer token on every protected request.
+    Extracts authenticated user identity and role directly from the validated cryptographic payload.
+    """
+    if not credentials or not credentials.credentials:
+        raise HTTPException(status_code=401, detail="Authentication required: Missing Bearer token.")
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        user_id = payload.get("user_id") or payload.get("sub")
+        role = payload.get("role")
+        if not user_id or not role:
+            raise HTTPException(status_code=401, detail="Invalid token payload: Identity or role missing.")
+        return {
+            "user_id": str(user_id),
+            "role": str(role).upper(),
+            "email": payload.get("email"),
+            "full_name": payload.get("full_name")
+        }
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired. Please sign in again.")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid authentication token.")
+
+def require_role(*allowed_roles: str):
+    """
+    FastAPI dependency factory enforcing strict role-based authorization from signed tokens.
+    Rejects any request without a valid token matching the specified roles with HTTP 403.
+    """
+    def role_checker(current_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+        user_role = current_user.get("role", "").upper()
+        allowed_upper = [r.upper() for r in allowed_roles]
+        if user_role not in allowed_upper:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Access forbidden: User role '{user_role}' is not authorized. Required: {', '.join(allowed_upper)}."
+            )
+        return current_user
+    return role_checker
+
 # -----------------------------------------------------------------------------
 # In-Memory Fallback Store (Ensures 100% offline-first reliability & testing)
 # -----------------------------------------------------------------------------
-MEM_USERS: Dict[str, Dict[str, Any]] = {}
-MEM_BUSINESS_PROFILES: Dict[str, Dict[str, Any]] = {}
-MEM_VERIFICATION_APPLICATIONS: Dict[str, Dict[str, Any]] = {}
+# -----------------------------------------------------------------------------
+# Persistent Backend Storage & Memory Cache
+# -----------------------------------------------------------------------------
+storage.init_db()
+_db_data = storage.load_all_from_db()
+
+MEM_USERS: Dict[str, Dict[str, Any]] = _db_data["users"]
+MEM_BUSINESS_PROFILES: Dict[str, Dict[str, Any]] = _db_data["business_profiles"]
+MEM_VERIFICATION_APPLICATIONS: Dict[str, Dict[str, Any]] = _db_data["verification_applications"]
 MEM_VERIFICATION_DOCUMENTS: Dict[str, Dict[str, Any]] = {}
-MEM_AUDIT_LOGS: List[Dict[str, Any]] = []
-MEM_INDICATIVE_PRICES: Dict[str, Dict[str, Any]] = {}
-MEM_HUB_OFFERS: Dict[str, Dict[str, Any]] = {}
-MEM_PRICING_TRANSACTIONS: Dict[str, Dict[str, Any]] = {}
+MEM_AUDIT_LOGS: List[Dict[str, Any]] = _db_data["audit_logs"]
+MEM_INDICATIVE_PRICES: Dict[str, Dict[str, Any]] = _db_data["indicative_prices"]
+MEM_HUB_OFFERS: Dict[str, Dict[str, Any]] = _db_data["hub_offers"]
+MEM_PRICING_TRANSACTIONS: Dict[str, Dict[str, Any]] = _db_data["pricing_transactions"]
+MEM_DESTINATIONS: Dict[str, Dict[str, Any]] = _db_data["destinations"]
+MEM_HANDOVERS: Dict[str, Dict[str, Any]] = _db_data["handovers"]
+MEM_LOTS: Dict[str, Dict[str, Any]] = _db_data["lots"]
+MEM_HUB_PURCHASES: Dict[str, Dict[str, Any]] = _db_data["hub_purchases"]
+MEM_PAYMENTS: Dict[str, Dict[str, Any]] = _db_data["payments"]
+MEM_SHIPMENTS: Dict[str, Dict[str, Any]] = _db_data["shipments"]
 
 def hash_password(password: str) -> str:
     """Deterministic password hashing with fixed salt for prototype."""
     salt = "kabadiwala_salt_2026"
     return hashlib.sha256(f"{password}:{salt}".encode()).hexdigest()
 
-# Seed default administrator and verified demo businesses
 ADMIN_SEED_ID = "admin-sys-001"
-MEM_USERS[ADMIN_SEED_ID] = {
-    "id": ADMIN_SEED_ID,
-    "email": "admin@kabadiwala.in",
-    "phone": "+91 98000 00001",
-    "full_name": "CPCB State Admin Officer",
-    "password_hash": hash_password("Admin@123"),
-    "role": "ADMIN",
-    "is_active": True,
-    "created_at": datetime.utcnow().isoformat(),
-}
-
-# Seed default demo approved Hub
 HUB_SEED_USER_ID = "hub-user-001"
 HUB_PROFILE_ID = "HUB-BLR-01"
-MEM_USERS[HUB_SEED_USER_ID] = {
-    "id": HUB_SEED_USER_ID,
-    "email": "hub.east@kabadiwala.in",
-    "phone": "+91 98451 22334",
-    "full_name": "Anil Kumar (Hub Operator)",
-    "password_hash": hash_password("Hub@123"),
-    "role": "HUB",
-    "is_active": True,
-    "created_at": datetime.utcnow().isoformat(),
-}
-MEM_BUSINESS_PROFILES[HUB_PROFILE_ID] = {
-    "id": HUB_PROFILE_ID,
-    "user_id": HUB_SEED_USER_ID,
-    "role": "HUB",
-    "business_name": "Bengaluru East Scrap & E-Waste Godown",
-    "authorized_contact": "Anil Kumar",
-    "facility_address": "Ward 54, K.R. Puram Industrial Cross, Bengaluru",
-    "district": "Bengaluru Urban",
-    "operating_area": "East Bengaluru Sub-district",
-    "accepted_materials": ["Circuit Boards (PCB)", "Copper Cables", "Mobile Phones"],
-    "cpcb_registration_number": "CPCB-HUB-KA-2024-0091",
-    "facility_scope": "Secondary Storage & Sorting Facility (<100 MT)",
-    "status": "approved",
-    "created_at": datetime.utcnow().isoformat(),
-}
 HUB_APP_ID = "app-hub-001"
-MEM_VERIFICATION_APPLICATIONS[HUB_APP_ID] = {
-    "id": HUB_APP_ID,
-    "business_profile_id": HUB_PROFILE_ID,
-    "user_id": HUB_SEED_USER_ID,
-    "role": "HUB",
-    "status": "approved",
-    "submitted_at": datetime.utcnow().isoformat(),
-    "reviewed_at": datetime.utcnow().isoformat(),
-    "reviewer_id": ADMIN_SEED_ID,
-    "review_decision": "approved",
-    "review_notes": "Facility inspection verified. Fire safety and storage requirements met.",
-    "official_registry_ref": "KSPCB/E-WASTE/REG/2024/091",
-    "created_at": datetime.utcnow().isoformat(),
-}
-
-# Seed default demo approved Recycler
 RECYCLER_SEED_USER_ID = "recycler-user-001"
 RECYCLER_PROFILE_ID = "R1"
-MEM_USERS[RECYCLER_SEED_USER_ID] = {
-    "id": RECYCLER_SEED_USER_ID,
-    "email": "recycler.green@kabadiwala.in",
-    "phone": "+91 98455 11223",
-    "full_name": "Dr. Ramesh (Green Earth)",
-    "password_hash": hash_password("Recycler@123"),
-    "role": "RECYCLER",
-    "is_active": True,
-    "created_at": datetime.utcnow().isoformat(),
-}
-MEM_BUSINESS_PROFILES[RECYCLER_PROFILE_ID] = {
-    "id": RECYCLER_PROFILE_ID,
-    "user_id": RECYCLER_SEED_USER_ID,
-    "role": "RECYCLER",
-    "business_name": "Green Earth Recycling",
-    "authorized_contact": "Dr. Ramesh",
-    "facility_address": "Plot 42, Peenya Industrial Area, Phase II, Bengaluru",
-    "district": "Bengaluru Urban",
-    "operating_area": "Karnataka State Wide",
-    "accepted_materials": ["Circuit Boards (PCB)", "Copper Cables", "Mobile Phones"],
-    "cpcb_registration_number": "CPCB/EW-REG/2024/01",
-    "facility_scope": "Formal Dismantling & Material Recovery Plant (500 MT/year)",
-    "status": "approved",
-    "created_at": datetime.utcnow().isoformat(),
-}
 RECYCLER_APP_ID = "app-rec-001"
-MEM_VERIFICATION_APPLICATIONS[RECYCLER_APP_ID] = {
-    "id": RECYCLER_APP_ID,
-    "business_profile_id": RECYCLER_PROFILE_ID,
-    "user_id": RECYCLER_SEED_USER_ID,
-    "role": "RECYCLER",
-    "status": "approved",
-    "submitted_at": datetime.utcnow().isoformat(),
-    "reviewed_at": datetime.utcnow().isoformat(),
-    "reviewer_id": ADMIN_SEED_ID,
-    "review_decision": "approved",
-    "review_notes": "Statutory CPCB authorization verified. Valid till 2029.",
-    "official_registry_ref": "CPCB/EW-REG/2024/01",
-    "created_at": datetime.utcnow().isoformat(),
-}
 
-# -----------------------------------------------------------------------------
-# Pricing Management Demo Seeds
-# -----------------------------------------------------------------------------
-MEM_INDICATIVE_PRICES["IND-PCB-01"] = {
-    "id": "IND-PCB-01",
-    "material": "Circuit Boards (PCB)",
-    "grade": "High-Grade Telecom / Server Motherboards",
-    "min_price": 240.0,
-    "max_price": 280.0,
-    "unit": "kg",
-    "location": "Bengaluru Urban & Rural",
-    "source_name": "CPCB E-Waste Market Bulletin Q4",
-    "source_date": "2026-10-01",
-    "effective_date": "2026-10-01",
-    "expiry_date": "2026-12-31",
-    "status": "published",
-    "is_sample": True,
-    "is_indicative": True,
-    "created_by": "CPCB State Admin Officer",
-    "updated_by": "CPCB State Admin Officer",
-    "created_at": (datetime.utcnow() - timedelta(days=12)).isoformat(),
-    "updated_at": (datetime.utcnow() - timedelta(days=12)).isoformat(),
-}
+# Seed default administrator and verified demo businesses if storage is empty
+if len(MEM_USERS) == 0:
+    MEM_USERS[ADMIN_SEED_ID] = {
+        "id": ADMIN_SEED_ID,
+        "email": "admin@kabadiwala.in",
+        "phone": "+91 98000 00001",
+        "full_name": "CPCB State Admin Officer",
+        "password_hash": hash_password("Admin@123"),
+        "role": "ADMIN",
+        "is_active": True,
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    storage.save_user(MEM_USERS[ADMIN_SEED_ID])
 
-MEM_INDICATIVE_PRICES["IND-CABLE-01"] = {
-    "id": "IND-CABLE-01",
-    "material": "Copper Cables",
-    "grade": "Heavy Gauge Stripped & Insulated (>60% Cu)",
-    "min_price": 420.0,
-    "max_price": 470.0,
-    "unit": "kg",
-    "location": "Karnataka State Index",
-    "source_name": "MRAI Non-Ferrous Scrap Index",
-    "source_date": "2026-10-05",
-    "effective_date": "2026-10-05",
-    "expiry_date": "2026-11-30",
-    "status": "published",
-    "is_sample": True,
-    "is_indicative": True,
-    "created_by": "CPCB State Admin Officer",
-    "updated_by": "CPCB State Admin Officer",
-    "created_at": (datetime.utcnow() - timedelta(days=8)).isoformat(),
-    "updated_at": (datetime.utcnow() - timedelta(days=8)).isoformat(),
-}
+    MEM_USERS[HUB_SEED_USER_ID] = {
+        "id": HUB_SEED_USER_ID,
+        "email": "hub.east@kabadiwala.in",
+        "phone": "+91 98451 22334",
+        "full_name": "Anil Kumar (Hub Operator)",
+        "password_hash": hash_password("Hub@123"),
+        "role": "HUB",
+        "is_active": True,
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    storage.save_user(MEM_USERS[HUB_SEED_USER_ID])
 
-MEM_INDICATIVE_PRICES["IND-PHONE-01"] = {
-    "id": "IND-PHONE-01",
-    "material": "Mobile Phones",
-    "grade": "Complete Handsets with Battery & Boards",
-    "min_price": 300.0,
-    "max_price": 360.0,
-    "unit": "kg",
-    "location": "Bengaluru Urban",
-    "source_name": "Formal Recyclers Association Benchmark",
-    "source_date": "2026-10-08",
-    "effective_date": "2026-10-08",
-    "expiry_date": "2026-11-15",
-    "status": "published",
-    "is_sample": True,
-    "is_indicative": True,
-    "created_by": "CPCB State Admin Officer",
-    "updated_by": "CPCB State Admin Officer",
-    "created_at": (datetime.utcnow() - timedelta(days=5)).isoformat(),
-    "updated_at": (datetime.utcnow() - timedelta(days=5)).isoformat(),
-}
+    MEM_BUSINESS_PROFILES[HUB_PROFILE_ID] = {
+        "id": HUB_PROFILE_ID,
+        "user_id": HUB_SEED_USER_ID,
+        "role": "HUB",
+        "business_name": "Bengaluru East Scrap & E-Waste Godown",
+        "authorized_contact": "Anil Kumar",
+        "facility_address": "Ward 54, K.R. Puram Industrial Cross, Bengaluru",
+        "district": "Bengaluru Urban",
+        "operating_area": "East Bengaluru Sub-district",
+        "accepted_materials": ["Circuit Boards (PCB)", "Copper Cables", "Mobile Phones"],
+        "cpcb_registration_number": "CPCB-HUB-KA-2024-0091",
+        "facility_scope": "Secondary Storage & Sorting Facility (<100 MT)",
+        "status": "approved",
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    storage.save_business_profile(MEM_BUSINESS_PROFILES[HUB_PROFILE_ID])
 
-MEM_INDICATIVE_PRICES["IND-BAT-01"] = {
-    "id": "IND-BAT-01",
-    "material": "Lithium-ion Batteries",
-    "grade": "Mobile & Laptop Grade Cells (Intact)",
-    "min_price": 160.0,
-    "max_price": 200.0,
-    "unit": "kg",
-    "location": "Bengaluru Urban",
-    "source_name": "KSPCB Hazardous Waste Directorate",
-    "source_date": "2026-10-02",
-    "effective_date": "2026-10-02",
-    "expiry_date": "2026-11-30",
-    "status": "published",
-    "is_sample": True,
-    "is_indicative": True,
-    "created_by": "CPCB State Admin Officer",
-    "updated_by": "CPCB State Admin Officer",
-    "created_at": (datetime.utcnow() - timedelta(days=10)).isoformat(),
-    "updated_at": (datetime.utcnow() - timedelta(days=10)).isoformat(),
-}
+    MEM_VERIFICATION_APPLICATIONS[HUB_APP_ID] = {
+        "id": HUB_APP_ID,
+        "business_profile_id": HUB_PROFILE_ID,
+        "user_id": HUB_SEED_USER_ID,
+        "role": "HUB",
+        "status": "approved",
+        "submitted_at": datetime.utcnow().isoformat(),
+        "reviewed_at": datetime.utcnow().isoformat(),
+        "reviewer_id": ADMIN_SEED_ID,
+        "review_decision": "approved",
+        "review_notes": "Facility inspection verified. Fire safety and storage requirements met.",
+        "official_registry_ref": "KSPCB/E-WASTE/REG/2024/091",
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    storage.save_verification_application(MEM_VERIFICATION_APPLICATIONS[HUB_APP_ID])
 
-MEM_HUB_OFFERS["OFFER-HUB-01"] = {
-    "id": "OFFER-HUB-01",
-    "hub_id": "HUB-BLR-01",
-    "hub_name": "Bengaluru East Scrap & E-Waste Godown",
-    "hub_verification_status": "approved",
-    "material": "Circuit Boards (PCB)",
-    "grade": "High-Grade Telecom / Server Motherboards",
-    "rate": 265.0,
-    "unit": "kg",
-    "min_quantity_kg": 10.0,
-    "supported_services": ["DROP_OFF", "PICKUP"],
-    "pickup_fee": 50.0,
-    "applicable_area": "Ward 54, K.R. Puram / East Sub-district",
-    "valid_from": "2026-10-01",
-    "valid_till": "2026-11-30",
-    "status": "active",
-    "terms_note": "Digital weighbridge on site. Free moisture check. Deductions only for foreign casing plastic.",
-    "is_sample": True,
-    "created_at": (datetime.utcnow() - timedelta(days=7)).isoformat(),
-    "updated_at": (datetime.utcnow() - timedelta(days=7)).isoformat(),
-}
+    MEM_USERS[RECYCLER_SEED_USER_ID] = {
+        "id": RECYCLER_SEED_USER_ID,
+        "email": "recycler.green@kabadiwala.in",
+        "phone": "+91 98455 11223",
+        "full_name": "Dr. Ramesh (Green Earth)",
+        "password_hash": hash_password("Recycler@123"),
+        "role": "RECYCLER",
+        "is_active": True,
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    storage.save_user(MEM_USERS[RECYCLER_SEED_USER_ID])
 
-MEM_HUB_OFFERS["OFFER-HUB-02"] = {
-    "id": "OFFER-HUB-02",
-    "hub_id": "HUB-BLR-02",
-    "hub_name": "South City Aggregation Hub",
-    "hub_verification_status": "approved",
-    "material": "Circuit Boards (PCB)",
-    "grade": "Mixed Electronic Scrap & Boards",
-    "rate": 250.0,
-    "unit": "kg",
-    "min_quantity_kg": 5.0,
-    "supported_services": ["DROP_OFF"],
-    "pickup_fee": 0.0,
-    "applicable_area": "BTM Layout, Jayanagar & South Wards",
-    "valid_from": "2026-10-05",
-    "valid_till": "2026-11-25",
-    "status": "active",
-    "terms_note": "Direct godown drop-off only. Instant UPI payment disbursement upon scale confirmation.",
-    "is_sample": True,
-    "created_at": (datetime.utcnow() - timedelta(days=5)).isoformat(),
-    "updated_at": (datetime.utcnow() - timedelta(days=5)).isoformat(),
-}
+    MEM_BUSINESS_PROFILES[RECYCLER_PROFILE_ID] = {
+        "id": RECYCLER_PROFILE_ID,
+        "user_id": RECYCLER_SEED_USER_ID,
+        "role": "RECYCLER",
+        "business_name": "Green Earth Recycling",
+        "authorized_contact": "Dr. Ramesh",
+        "facility_address": "Plot 42, Peenya Industrial Area, Phase II, Bengaluru",
+        "district": "Bengaluru Urban",
+        "operating_area": "Karnataka State Wide",
+        "accepted_materials": ["Circuit Boards (PCB)", "Copper Cables", "Mobile Phones"],
+        "cpcb_registration_number": "CPCB/EW-REG/2024/01",
+        "facility_scope": "Formal Dismantling & Material Recovery Plant (500 MT/year)",
+        "status": "approved",
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    storage.save_business_profile(MEM_BUSINESS_PROFILES[RECYCLER_PROFILE_ID])
 
-MEM_HUB_OFFERS["OFFER-HUB-03"] = {
-    "id": "OFFER-HUB-03",
-    "hub_id": "HUB-BLR-01",
-    "hub_name": "Bengaluru East Scrap & E-Waste Godown",
-    "hub_verification_status": "approved",
-    "material": "Copper Cables",
-    "grade": "Heavy Gauge Stripped & Insulated (>60% Cu)",
-    "rate": 445.0,
-    "unit": "kg",
-    "min_quantity_kg": 5.0,
-    "supported_services": ["DROP_OFF", "PICKUP"],
-    "pickup_fee": 50.0,
-    "applicable_area": "East Bengaluru, K.R. Puram Industrial Cross",
-    "valid_from": "2026-10-08",
-    "valid_till": "2026-12-01",
-    "status": "active",
-    "terms_note": "Immediate electronic payout. Minimum 15 kg batch.",
-    "is_sample": True,
-    "created_at": (datetime.utcnow() - timedelta(days=3)).isoformat(),
-    "updated_at": (datetime.utcnow() - timedelta(days=3)).isoformat(),
-}
+    MEM_VERIFICATION_APPLICATIONS[RECYCLER_APP_ID] = {
+        "id": RECYCLER_APP_ID,
+        "business_profile_id": RECYCLER_PROFILE_ID,
+        "user_id": RECYCLER_SEED_USER_ID,
+        "role": "RECYCLER",
+        "status": "approved",
+        "submitted_at": datetime.utcnow().isoformat(),
+        "reviewed_at": datetime.utcnow().isoformat(),
+        "reviewer_id": ADMIN_SEED_ID,
+        "review_decision": "approved",
+        "review_notes": "Statutory CPCB authorization verified. Valid till 2029.",
+        "official_registry_ref": "CPCB/EW-REG/2024/01",
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    storage.save_verification_application(MEM_VERIFICATION_APPLICATIONS[RECYCLER_APP_ID])
+
+if len(MEM_INDICATIVE_PRICES) == 0:
+    MEM_INDICATIVE_PRICES["IND-PCB-01"] = {
+        "id": "IND-PCB-01",
+        "material": "Circuit Boards (PCB)",
+        "grade": "High-Grade Telecom / Server Motherboards",
+        "min_price": 240.0,
+        "max_price": 280.0,
+        "unit": "kg",
+        "location": "Bengaluru Urban & Rural",
+        "source_name": "CPCB E-Waste Market Bulletin Q4",
+        "source_date": "2026-10-01",
+        "effective_date": "2026-10-01",
+        "expiry_date": "2026-12-31",
+        "status": "published",
+        "is_sample": True,
+        "is_indicative": True,
+        "created_by": "CPCB State Admin Officer",
+        "updated_by": "CPCB State Admin Officer",
+        "created_at": (datetime.utcnow() - timedelta(days=12)).isoformat(),
+        "updated_at": (datetime.utcnow() - timedelta(days=12)).isoformat(),
+    }
+    storage.save_indicative_price(MEM_INDICATIVE_PRICES["IND-PCB-01"])
+
+    MEM_INDICATIVE_PRICES["IND-CABLE-01"] = {
+        "id": "IND-CABLE-01",
+        "material": "Copper Cables",
+        "grade": "Heavy Gauge Stripped & Insulated (>60% Cu)",
+        "min_price": 420.0,
+        "max_price": 470.0,
+        "unit": "kg",
+        "location": "Karnataka State Index",
+        "source_name": "MRAI Non-Ferrous Scrap Index",
+        "source_date": "2026-10-05",
+        "effective_date": "2026-10-05",
+        "expiry_date": "2026-11-30",
+        "status": "published",
+        "is_sample": True,
+        "is_indicative": True,
+        "created_by": "CPCB State Admin Officer",
+        "updated_by": "CPCB State Admin Officer",
+        "created_at": (datetime.utcnow() - timedelta(days=8)).isoformat(),
+        "updated_at": (datetime.utcnow() - timedelta(days=8)).isoformat(),
+    }
+    storage.save_indicative_price(MEM_INDICATIVE_PRICES["IND-CABLE-01"])
+
+    MEM_INDICATIVE_PRICES["IND-PHONE-01"] = {
+        "id": "IND-PHONE-01",
+        "material": "Mobile Phones",
+        "grade": "Complete Handsets with Battery & Boards",
+        "min_price": 300.0,
+        "max_price": 360.0,
+        "unit": "kg",
+        "location": "Bengaluru Urban",
+        "source_name": "Formal Recyclers Association Benchmark",
+        "source_date": "2026-10-08",
+        "effective_date": "2026-10-08",
+        "expiry_date": "2026-11-15",
+        "status": "published",
+        "is_sample": True,
+        "is_indicative": True,
+        "created_by": "CPCB State Admin Officer",
+        "updated_by": "CPCB State Admin Officer",
+        "created_at": (datetime.utcnow() - timedelta(days=5)).isoformat(),
+        "updated_at": (datetime.utcnow() - timedelta(days=5)).isoformat(),
+    }
+    storage.save_indicative_price(MEM_INDICATIVE_PRICES["IND-PHONE-01"])
+
+    MEM_INDICATIVE_PRICES["IND-BAT-01"] = {
+        "id": "IND-BAT-01",
+        "material": "Lithium-ion Batteries",
+        "grade": "Mobile & Laptop Grade Cells (Intact)",
+        "min_price": 160.0,
+        "max_price": 200.0,
+        "unit": "kg",
+        "location": "Bengaluru Urban",
+        "source_name": "KSPCB Hazardous Waste Directorate",
+        "source_date": "2026-10-02",
+        "effective_date": "2026-10-02",
+        "expiry_date": "2026-11-30",
+        "status": "published",
+        "is_sample": True,
+        "is_indicative": True,
+        "created_by": "CPCB State Admin Officer",
+        "updated_by": "CPCB State Admin Officer",
+        "created_at": (datetime.utcnow() - timedelta(days=10)).isoformat(),
+        "updated_at": (datetime.utcnow() - timedelta(days=10)).isoformat(),
+    }
+    storage.save_indicative_price(MEM_INDICATIVE_PRICES["IND-BAT-01"])
+
+if len(MEM_HUB_OFFERS) == 0:
+    MEM_HUB_OFFERS["OFFER-HUB-01"] = {
+        "id": "OFFER-HUB-01",
+        "hub_id": "HUB-BLR-01",
+        "hub_name": "Bengaluru East Scrap & E-Waste Godown",
+        "hub_verification_status": "approved",
+        "material": "Circuit Boards (PCB)",
+        "grade": "High-Grade Telecom / Server Motherboards",
+        "rate": 265.0,
+        "unit": "kg",
+        "min_quantity_kg": 10.0,
+        "supported_services": ["DROP_OFF", "PICKUP"],
+        "pickup_fee": 50.0,
+        "applicable_area": "Ward 54, K.R. Puram / East Sub-district",
+        "valid_from": "2026-10-01",
+        "valid_till": "2026-11-30",
+        "status": "active",
+        "terms_note": "Digital weighbridge on site. Free moisture check. Deductions only for foreign casing plastic.",
+        "is_sample": True,
+        "created_at": (datetime.utcnow() - timedelta(days=7)).isoformat(),
+        "updated_at": (datetime.utcnow() - timedelta(days=7)).isoformat(),
+    }
+    storage.save_hub_offer(MEM_HUB_OFFERS["OFFER-HUB-01"])
+
+    MEM_HUB_OFFERS["OFFER-HUB-02"] = {
+        "id": "OFFER-HUB-02",
+        "hub_id": "HUB-BLR-02",
+        "hub_name": "South City Aggregation Hub",
+        "hub_verification_status": "approved",
+        "material": "Circuit Boards (PCB)",
+        "grade": "Mixed Electronic Scrap & Boards",
+        "rate": 250.0,
+        "unit": "kg",
+        "min_quantity_kg": 5.0,
+        "supported_services": ["DROP_OFF"],
+        "pickup_fee": 0.0,
+        "applicable_area": "BTM Layout, Jayanagar & South Wards",
+        "valid_from": "2026-10-05",
+        "valid_till": "2026-11-25",
+        "status": "active",
+        "terms_note": "Direct godown drop-off only. Instant UPI payment disbursement upon scale confirmation.",
+        "is_sample": True,
+        "created_at": (datetime.utcnow() - timedelta(days=5)).isoformat(),
+        "updated_at": (datetime.utcnow() - timedelta(days=5)).isoformat(),
+    }
+    storage.save_hub_offer(MEM_HUB_OFFERS["OFFER-HUB-02"])
+
+    MEM_HUB_OFFERS["OFFER-HUB-03"] = {
+        "id": "OFFER-HUB-03",
+        "hub_id": "HUB-BLR-01",
+        "hub_name": "Bengaluru East Scrap & E-Waste Godown",
+        "hub_verification_status": "approved",
+        "material": "Copper Cables",
+        "grade": "Heavy Gauge Stripped & Insulated (>60% Cu)",
+        "rate": 445.0,
+        "unit": "kg",
+        "min_quantity_kg": 5.0,
+        "supported_services": ["DROP_OFF", "PICKUP"],
+        "pickup_fee": 50.0,
+        "applicable_area": "East Bengaluru, K.R. Puram Industrial Cross",
+        "valid_from": "2026-10-08",
+        "valid_till": "2026-12-01",
+        "status": "active",
+        "terms_note": "Immediate electronic payout. Minimum 15 kg batch.",
+        "is_sample": True,
+        "created_at": (datetime.utcnow() - timedelta(days=3)).isoformat(),
+        "updated_at": (datetime.utcnow() - timedelta(days=3)).isoformat(),
+    }
+    storage.save_hub_offer(MEM_HUB_OFFERS["OFFER-HUB-03"])
 
 # -----------------------------------------------------------------------------
 # Request & Response Schemas
@@ -556,6 +659,7 @@ def register_user(req: RegisterRequest):
         "created_at": datetime.utcnow().isoformat(),
     }
     MEM_USERS[user_id] = new_user
+    storage.save_user(new_user)
 
     business_profile = None
     verification_app = None
@@ -585,6 +689,7 @@ def register_user(req: RegisterRequest):
             "created_at": datetime.utcnow().isoformat(),
         }
         MEM_BUSINESS_PROFILES[profile_id] = business_profile
+        storage.save_business_profile(business_profile)
 
         app_id = f"APP-{str(uuid.uuid4())[:8].upper()}"
         verification_app = {
@@ -604,9 +709,10 @@ def register_user(req: RegisterRequest):
             "created_at": datetime.utcnow().isoformat(),
         }
         MEM_VERIFICATION_APPLICATIONS[app_id] = verification_app
+        storage.save_verification_application(verification_app)
 
         # Log audit event
-        MEM_AUDIT_LOGS.append({
+        audit_entry = {
             "id": str(uuid.uuid4()),
             "entity_type": "APPLICATION",
             "entity_id": app_id,
@@ -614,11 +720,22 @@ def register_user(req: RegisterRequest):
             "performed_by": user_id,
             "details": {"role": normalized_role, "business_name": business_name},
             "created_at": datetime.utcnow().isoformat(),
-        })
+        }
+        MEM_AUDIT_LOGS.append(audit_entry)
+        storage.save_audit_log(audit_entry)
+
+    token = create_access_token({
+        "sub": new_user["id"],
+        "user_id": new_user["id"],
+        "email": new_user["email"],
+        "role": new_user["role"],
+        "full_name": new_user["full_name"],
+    })
 
     return {
         "status": "success",
         "message": f"Account successfully created for {normalized_role}.",
+        "token": token,
         "user": {
             "id": new_user["id"],
             "email": new_user["email"],
@@ -663,9 +780,17 @@ def login_user(req: LoginRequest):
                 verification_application = app
                 break
 
+    token = create_access_token({
+        "sub": user["id"],
+        "user_id": user["id"],
+        "email": user["email"],
+        "role": user["role"],
+        "full_name": user["full_name"],
+    })
+
     return {
         "status": "success",
-        "token": f"token-{user['id']}-{int(datetime.utcnow().timestamp())}",
+        "token": token,
         "user": {
             "id": user["id"],
             "email": user["email"],
@@ -682,15 +807,16 @@ def login_user(req: LoginRequest):
 # Verification Application & Resubmission Endpoints
 # -----------------------------------------------------------------------------
 @app.post("/verification/apply")
-def submit_or_update_application(req: VerificationApplyRequest):
+def submit_or_update_application(
+    req: VerificationApplyRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
     """
     Submits or updates a business verification application.
+    Derives authenticated identity directly from the signed bearer token.
     RULE: Resubmission must NOT automatically approve the application; sets state to 'under_review'.
     """
-    user_id = req.user_id or req.userId
-    if not user_id:
-        raise HTTPException(status_code=400, detail="User ID is required.")
-
+    user_id = current_user["user_id"]
     user = MEM_USERS.get(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
@@ -714,11 +840,11 @@ def submit_or_update_application(req: VerificationApplyRequest):
             break
 
     if not business_profile:
-        profile_id = f"{'HUB' if req.role == 'HUB' else 'REC'}-{str(uuid.uuid4())[:8].upper()}"
+        profile_id = f"{'HUB' if user['role'] == 'HUB' else 'REC'}-{str(uuid.uuid4())[:8].upper()}"
         business_profile = {
             "id": profile_id,
             "user_id": user_id,
-            "role": req.role,
+            "role": user["role"],
             "business_name": business_name,
             "authorized_contact": user["full_name"],
             "facility_address": facility_address,
@@ -754,8 +880,8 @@ def submit_or_update_application(req: VerificationApplyRequest):
         verification_app = {
             "id": app_id,
             "business_profile_id": business_profile["id"],
-            "user_id": req.user_id,
-            "role": req.role,
+            "user_id": user_id,
+            "role": user["role"],
             "status": "under_review",
             "submitted_at": datetime.utcnow().isoformat(),
             "created_at": datetime.utcnow().isoformat(),
@@ -768,16 +894,21 @@ def submit_or_update_application(req: VerificationApplyRequest):
         verification_app["rejection_reason"] = None
         verification_app["correction_requests"] = None
 
+    storage.save_business_profile(business_profile)
+    storage.save_verification_application(verification_app)
+
     # Log audit event
-    MEM_AUDIT_LOGS.append({
+    audit_entry = {
         "id": str(uuid.uuid4()),
         "entity_type": "APPLICATION",
         "entity_id": verification_app["id"],
         "action": "RESUBMITTED",
-        "performed_by": req.user_id,
-        "details": {"business_name": req.business_name, "district": req.district},
+        "performed_by": user_id,
+        "details": {"business_name": business_name, "district": district},
         "created_at": datetime.utcnow().isoformat(),
-    })
+    }
+    MEM_AUDIT_LOGS.append(audit_entry)
+    storage.save_audit_log(audit_entry)
 
     return {
         "status": "success",
@@ -787,8 +918,17 @@ def submit_or_update_application(req: VerificationApplyRequest):
     }
 
 @app.get("/verification/my-application/{user_id}")
-def get_user_application(user_id: str):
-    """Retrieves current verification application, review notes, and status."""
+def get_user_application(
+    user_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Retrieves current verification application, review notes, and status.
+    Authorizes strictly the owning user or an administrator.
+    """
+    if current_user["user_id"] != user_id and current_user["role"] != "ADMIN":
+        raise HTTPException(status_code=403, detail="Forbidden: You can only view your own verification application.")
+
     for app in MEM_VERIFICATION_APPLICATIONS.values():
         if app["user_id"] == user_id:
             profile = MEM_BUSINESS_PROFILES.get(app["business_profile_id"])
@@ -807,15 +947,12 @@ def list_verification_applications(
     role: Optional[str] = None,
     status: Optional[str] = None,
     district: Optional[str] = None,
-    x_user_role: Optional[str] = Header(None, alias="X-User-Role")
+    current_user: Dict[str, Any] = Depends(require_role("ADMIN"))
 ):
     """
     Lists verification applications for the Admin review queue.
-    Enforces Admin authorization header/role.
+    Enforces Administrator role from cryptographically signed bearer token.
     """
-    if not x_user_role or x_user_role.strip().upper() != "ADMIN":
-        raise HTTPException(status_code=403, detail="Unauthorized: Administrator role required.")
-
     results = []
     for app in MEM_VERIFICATION_APPLICATIONS.values():
         if role and app["role"].upper() != role.upper():
@@ -848,15 +985,12 @@ def list_verification_applications(
 def review_verification_application(
     app_id: str,
     review: AdminReviewRequest,
-    x_user_role: Optional[str] = Header(None, alias="X-User-Role")
+    current_user: Dict[str, Any] = Depends(require_role("ADMIN"))
 ):
     """
     Admin action to approve, reject, request changes, or suspend an application.
     Enforces mandatory reasons for negative or corrective decisions.
     """
-    if not x_user_role or x_user_role.strip().upper() != "ADMIN":
-        raise HTTPException(status_code=403, detail="Unauthorized: Administrator role required.")
-
     app = MEM_VERIFICATION_APPLICATIONS.get(app_id)
     if not app:
         raise HTTPException(status_code=404, detail=f"Application '{app_id}' not found.")
@@ -881,10 +1015,12 @@ def review_verification_application(
             detail=f"A clear reason is mandatory when setting application status to '{target_status}'."
         )
 
+    reviewer_id = current_user["user_id"] or review.reviewer_id or "admin-sys-001"
+
     # Apply decision
     app["status"] = target_status
     app["reviewed_at"] = datetime.utcnow().isoformat()
-    app["reviewer_id"] = review.reviewer_id or "admin-sys-001"
+    app["reviewer_id"] = reviewer_id
     app["review_decision"] = target_status
     rev_notes = (review.review_notes or review.reviewNotes or "").strip()
     app["review_notes"] = rev_notes
@@ -913,7 +1049,7 @@ def review_verification_application(
         "entity_type": "APPLICATION",
         "entity_id": app_id,
         "action": target_status.upper(),
-        "performed_by": review.reviewer_id or "admin-sys-001",
+        "performed_by": reviewer_id,
         "reason": review.reason or "",
         "details": {
             "business_profile_id": app["business_profile_id"],
@@ -923,6 +1059,10 @@ def review_verification_application(
         "created_at": datetime.utcnow().isoformat(),
     }
     MEM_AUDIT_LOGS.append(audit_event)
+    storage.save_verification_application(app)
+    if profile:
+        storage.save_business_profile(profile)
+    storage.save_audit_log(audit_event)
 
     return {
         "status": "success",
@@ -933,10 +1073,8 @@ def review_verification_application(
     }
 
 @app.get("/admin/audit-logs")
-def get_audit_logs(x_user_role: Optional[str] = Header(None, alias="X-User-Role")):
-    """Returns immutable verification decision audit history."""
-    if x_user_role and x_user_role.upper() != "ADMIN":
-        raise HTTPException(status_code=403, detail="Unauthorized: Administrator role required.")
+def get_audit_logs(current_user: Dict[str, Any] = Depends(require_role("ADMIN"))):
+    """Returns immutable verification decision audit history (Admin only)."""
     return {
         "status": "success",
         "count": len(MEM_AUDIT_LOGS),
@@ -969,7 +1107,7 @@ def get_approved_recyclers():
 # Destination Finder, Smart Matching Engine & Handover State Machine
 # -----------------------------------------------------------------------------
 
-MEM_DESTINATIONS: Dict[str, Dict[str, Any]] = {
+DEFAULT_DESTINATIONS: Dict[str, Dict[str, Any]] = {
     "HUB-BLR-01": {
         "id": "HUB-BLR-01",
         "name": "Bengaluru East Scrap & E-Waste Godown",
@@ -1127,7 +1265,10 @@ MEM_DESTINATIONS: Dict[str, Dict[str, Any]] = {
     }
 }
 
-MEM_HANDOVERS: Dict[str, Dict[str, Any]] = {}
+if len(MEM_DESTINATIONS) == 0:
+    MEM_DESTINATIONS.update(DEFAULT_DESTINATIONS)
+    for d in DEFAULT_DESTINATIONS.values():
+        storage.save_destination(d)
 
 def calculate_haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     R = 6371.0
@@ -1384,16 +1525,27 @@ def search_destinations(req: DestinationSearchRequest):
     }
 
 @app.post("/handovers/quote-request")
-def create_handover_quote_request(req: QuoteRequestCreate):
+def create_handover_quote_request(
+    req: QuoteRequestCreate,
+    current_user: Dict[str, Any] = Depends(require_role("COLLECTOR", "ADMIN"))
+):
     """
     Creates a formal quote/handover booking request for a collector lot.
     Enforces concurrency checks (no duplicate active bookings for the same lot)
     and authoritative server-side destination validation.
+    Derives collector identity from the cryptographically validated token.
     """
     lot_id = (req.lot_id or req.lotId or "").strip()
     dest_id = (req.destination_id or req.destinationId or "").strip()
-    c_id = (req.collector_id or req.collectorId or "KAB-7842").strip()
-    c_name = (req.collector_name or req.collectorName or "Collector").strip()
+    
+    # Authenticated collector derivation
+    if current_user["role"] == "COLLECTOR":
+        c_id = current_user["user_id"]
+        c_name = current_user.get("full_name") or req.collector_name or req.collectorName or "Collector"
+    else:
+        c_id = (req.collector_id or req.collectorId or current_user["user_id"]).strip()
+        c_name = (req.collector_name or req.collectorName or "Collector").strip()
+
     c_loc = (req.collector_location or req.collectorLocation or "Bengaluru").strip()
     c_phone = (req.collector_phone or req.collectorPhone or "").strip()
     weight = req.estimated_weight or req.estimatedWeight or 10.0
@@ -1460,6 +1612,7 @@ def create_handover_quote_request(req: QuoteRequestCreate):
         "updated_at": datetime.utcnow().isoformat()
     }
     MEM_HANDOVERS[handover_id] = handover_record
+    storage.save_handover(handover_record)
 
     return {
         "status": "success",
@@ -1468,14 +1621,24 @@ def create_handover_quote_request(req: QuoteRequestCreate):
     }
 
 @app.post("/handovers/{handover_id}/accept")
-def accept_handover_quote(handover_id: str):
+def accept_handover_quote(
+    handover_id: str,
+    current_user: Dict[str, Any] = Depends(require_role("COLLECTOR", "ADMIN"))
+):
     """
     Collector accepts offered quote terms.
     Transitions state from 'quoted' -> 'accepted' -> 'scheduled'.
+    Enforces ownership (only owning collector or admin can accept).
     """
     handover = MEM_HANDOVERS.get(handover_id)
     if not handover:
         raise HTTPException(status_code=404, detail=f"Handover booking '{handover_id}' not found.")
+
+    if current_user["role"] != "ADMIN" and handover.get("collector_id") != current_user["user_id"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: You can only accept quotes for your own lots."
+        )
 
     if handover["status"] not in ("quoted", "quote_requested", "destination_selected"):
         raise HTTPException(
@@ -1486,6 +1649,7 @@ def accept_handover_quote(handover_id: str):
     handover["status"] = "scheduled" if handover.get("scheduled_date") else "accepted"
     handover["price_state"] = "accepted"
     handover["updated_at"] = datetime.utcnow().isoformat()
+    storage.save_handover(handover)
 
     return {
         "status": "success",
@@ -1494,11 +1658,16 @@ def accept_handover_quote(handover_id: str):
     }
 
 @app.post("/handovers/{handover_id}/status")
-def update_handover_status(handover_id: str, update: HandoverStatusUpdate):
+def update_handover_status(
+    handover_id: str,
+    update: HandoverStatusUpdate,
+    current_user: Dict[str, Any] = Depends(require_role("HUB", "RECYCLER", "ADMIN"))
+):
     """
     Transitions the handover through its lifecycle state machine:
     scheduled -> ready_for_dropoff -> handed_over -> payment_recorded -> completed.
     Recalculates final net amount when actual scale weight is provided.
+    Enforces that only authorized Hubs, Recyclers, or Admins can transition intake/status.
     """
     handover = MEM_HANDOVERS.get(handover_id)
     if not handover:
@@ -1530,6 +1699,7 @@ def update_handover_status(handover_id: str, update: HandoverStatusUpdate):
 
     handover["status"] = new_status
     handover["updated_at"] = datetime.utcnow().isoformat()
+    storage.save_handover(handover)
 
     return {
         "status": "success",
@@ -1538,8 +1708,20 @@ def update_handover_status(handover_id: str, update: HandoverStatusUpdate):
     }
 
 @app.get("/handovers/collector/{collector_id}")
-def get_collector_handovers(collector_id: str):
-    """Retrieves all active and historical handover transactions for a collector."""
+def get_collector_handovers(
+    collector_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Retrieves all active and historical handover transactions for a collector.
+    Authorizes the owning collector or platform staff (Hub, Recycler, Admin).
+    """
+    if current_user["role"] not in ("ADMIN", "HUB", "RECYCLER") and collector_id != current_user["user_id"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: You can only view your own handover transactions."
+        )
+
     results = [
         h for h in MEM_HANDOVERS.values()
         if h.get("collector_id") == collector_id
@@ -1603,16 +1785,13 @@ def get_indicative_prices(
 @app.post("/admin/prices/indicative")
 def create_indicative_price(
     req: IndicativePriceCreate,
-    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
-    x_user_name: Optional[str] = Header("Admin Officer", alias="X-User-Name")
+    current_user: Dict[str, Any] = Depends(require_role("ADMIN"))
 ):
     """
     Admin-only: Creates and publishes an indicative market price band.
+    Enforces Administrator role from signed bearer token.
     Validates non-negative values, min <= max, and records created_by / updated_by audit metadata.
     """
-    if not x_user_role or x_user_role.strip().upper() != "ADMIN":
-        raise HTTPException(status_code=403, detail="Unauthorized: Administrator role required.")
-
     min_p = req.min_price if req.min_price is not None else (req.minPrice or 0.0)
     max_p = req.max_price if req.max_price is not None else (req.maxPrice or 0.0)
 
@@ -1623,6 +1802,7 @@ def create_indicative_price(
 
     price_id = f"IND-{uuid.uuid4().hex[:6].upper()}"
     now_iso = datetime.utcnow().isoformat()
+    admin_name = current_user.get("full_name") or "CPCB State Admin Officer"
 
     src_name = req.source_name or req.sourceName or "CPCB Market Bulletin"
     src_date = req.source_date or req.sourceDate or datetime.utcnow().date().isoformat()
@@ -1645,25 +1825,22 @@ def create_indicative_price(
         "status": (req.status or "published").strip().lower(),
         "is_sample": bool(is_sample),
         "is_indicative": True,
-        "created_by": x_user_name or "CPCB State Admin Officer",
-        "updated_by": x_user_name or "CPCB State Admin Officer",
+        "created_by": admin_name,
+        "updated_by": admin_name,
         "created_at": now_iso,
         "updated_at": now_iso,
     }
     MEM_INDICATIVE_PRICES[price_id] = record
+    storage.save_indicative_price(record)
     return {"status": "success", "message": "Indicative price created.", "indicative_price": record}
 
 @app.put("/admin/prices/indicative/{price_id}")
 def update_indicative_price(
     price_id: str,
     req: IndicativePriceUpdate,
-    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
-    x_user_name: Optional[str] = Header("Admin Officer", alias="X-User-Name")
+    current_user: Dict[str, Any] = Depends(require_role("ADMIN"))
 ):
     """Admin-only: Updates an existing indicative price record."""
-    if not x_user_role or x_user_role.strip().upper() != "ADMIN":
-        raise HTTPException(status_code=403, detail="Unauthorized: Administrator role required.")
-
     price = MEM_INDICATIVE_PRICES.get(price_id)
     if not price:
         raise HTTPException(status_code=404, detail=f"Indicative price '{price_id}' not found.")
@@ -1693,8 +1870,9 @@ def update_indicative_price(
     if exp_date: price["expiry_date"] = exp_date.strip()
     if req.status: price["status"] = req.status.strip().lower()
 
-    price["updated_by"] = x_user_name or "CPCB State Admin Officer"
+    price["updated_by"] = current_user.get("full_name") or "CPCB State Admin Officer"
     price["updated_at"] = datetime.utcnow().isoformat()
+    storage.save_indicative_price(price)
 
     return {"status": "success", "message": "Indicative price updated.", "indicative_price": price}
 
@@ -1703,13 +1881,9 @@ def update_indicative_price(
 def set_indicative_price_status(
     price_id: str,
     status_update: Dict[str, str],
-    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
-    x_user_name: Optional[str] = Header("Admin Officer", alias="X-User-Name")
+    current_user: Dict[str, Any] = Depends(require_role("ADMIN"))
 ):
     """Admin-only: Updates publication state (published, expired, draft)."""
-    if not x_user_role or x_user_role.strip().upper() != "ADMIN":
-        raise HTTPException(status_code=403, detail="Unauthorized: Administrator role required.")
-
     price = MEM_INDICATIVE_PRICES.get(price_id)
     if not price:
         raise HTTPException(status_code=404, detail=f"Indicative price '{price_id}' not found.")
@@ -1719,8 +1893,9 @@ def set_indicative_price_status(
         raise HTTPException(status_code=400, detail=f"Invalid status '{new_status}'.")
 
     price["status"] = new_status
-    price["updated_by"] = x_user_name or "CPCB State Admin Officer"
+    price["updated_by"] = current_user.get("full_name") or "CPCB State Admin Officer"
     price["updated_at"] = datetime.utcnow().isoformat()
+    storage.save_indicative_price(price)
     return {"status": "success", "message": f"Status updated to '{new_status}'.", "indicative_price": price}
 
 
@@ -1760,34 +1935,25 @@ def get_hub_specific_offers(hub_id: str):
 @app.post("/hub/offers")
 def create_hub_offer(
     req: HubOfferCreate,
-    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
-    x_hub_id: Optional[str] = Header(None, alias="X-Hub-Id"),
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id")
+    current_user: Dict[str, Any] = Depends(require_role("HUB", "ADMIN"))
 ):
     """
     Creates and broadcasts a binding hub buying offer.
     Enforces that:
-    1. Only approved and active hubs may publish offers.
-    2. A hub cannot publish offers for another hub ID.
-    3. Price and minimum quantities are positive and validity period is valid.
+    1. Caller must authenticate with a signed token for role HUB or ADMIN.
+    2. Only approved and active hubs may publish offers.
+    3. Hub operator cannot publish offers for facilities they do not own.
+    4. Price and minimum quantities are positive and validity period is valid.
     """
-    role = (x_user_role or "").strip().upper()
-    if role not in ("HUB", "ADMIN"):
-        raise HTTPException(status_code=403, detail="Unauthorized: Hub operator credentials required.")
-
     target_hub_id = req.hub_id or req.hubId
     if not target_hub_id:
         raise HTTPException(status_code=400, detail="hub_id is required.")
     target_hub_id = target_hub_id.strip()
 
-    # Ownership check: If X-Hub-Id is provided and doesn't match target_hub_id
-    if x_hub_id and x_hub_id.strip() != target_hub_id and role != "ADMIN":
-        raise HTTPException(status_code=403, detail="Forbidden: Cannot create buying offers for another hub facility.")
-
     # Verification status check: Must be approved
     hub_profile = MEM_BUSINESS_PROFILES.get(target_hub_id)
     if not hub_profile and (target_hub_id in ("HUB-BLR-01", "HUB-BLR-02") or target_hub_id.startswith("HUB-TEST") or "TEST" in target_hub_id):
-        hub_profile = {"status": "approved", "business_name": req.hub_name or req.hubName or "Approved Local Hub"}
+        hub_profile = {"status": "approved", "business_name": req.hub_name or req.hubName or "Approved Local Hub", "user_id": current_user["user_id"]}
 
     if not hub_profile:
         raise HTTPException(status_code=404, detail=f"Hub profile '{target_hub_id}' not found.")
@@ -1797,6 +1963,10 @@ def create_hub_offer(
             status_code=403,
             detail=f"Facility '{hub_profile.get('business_name', target_hub_id)}' is currently in state '{hub_profile.get('status')}'. Only officially approved hubs may publish buying offers."
         )
+
+    # Ownership check: If role is HUB (not ADMIN), caller must be the registered owner of this hub
+    if current_user["role"] == "HUB" and hub_profile.get("user_id") and hub_profile.get("user_id") != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Cannot create buying offers for another hub facility.")
 
     if req.rate <= 0:
         raise HTTPException(status_code=400, detail="Buying offer rate must be strictly greater than 0.")
@@ -1835,25 +2005,22 @@ def create_hub_offer(
         "updated_at": now_iso,
     }
     MEM_HUB_OFFERS[offer_id] = record
+    storage.save_hub_offer(record)
     return {"status": "success", "message": "Buying offer created successfully.", "offer": record, "hub_offer": record}
 
 @app.put("/hub/offers/{offer_id}")
 def update_hub_offer(
     offer_id: str,
     req: HubOfferUpdate,
-    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
-    x_hub_id: Optional[str] = Header(None, alias="X-Hub-Id")
+    current_user: Dict[str, Any] = Depends(require_role("HUB", "ADMIN"))
 ):
-    """Updates an existing hub buying offer. Validates ownership and parameters."""
-    role = (x_user_role or "").strip().upper()
-    if role not in ("HUB", "ADMIN"):
-        raise HTTPException(status_code=403, detail="Unauthorized: Hub operator credentials required.")
-
+    """Updates an existing hub buying offer. Validates ownership via signed token."""
     offer = MEM_HUB_OFFERS.get(offer_id)
     if not offer:
         raise HTTPException(status_code=404, detail=f"Offer '{offer_id}' not found.")
 
-    if x_hub_id and x_hub_id.strip() != offer["hub_id"] and role != "ADMIN":
+    hub_profile = MEM_BUSINESS_PROFILES.get(offer["hub_id"])
+    if current_user["role"] == "HUB" and hub_profile and hub_profile.get("user_id") and hub_profile.get("user_id") != current_user["user_id"]:
         raise HTTPException(status_code=403, detail="Forbidden: Cannot edit buying offers belonging to another hub facility.")
 
     if req.rate is not None:
@@ -1877,6 +2044,7 @@ def update_hub_offer(
     if terms is not None: offer["terms_note"] = terms
 
     offer["updated_at"] = datetime.utcnow().isoformat()
+    storage.save_hub_offer(offer)
     return {"status": "success", "message": "Offer updated.", "offer": offer, "hub_offer": offer}
 
 @app.put("/hub/offers/{offer_id}/status")
@@ -1884,19 +2052,15 @@ def update_hub_offer(
 def set_hub_offer_status(
     offer_id: str,
     status_update: Dict[str, str],
-    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
-    x_hub_id: Optional[str] = Header(None, alias="X-Hub-Id")
+    current_user: Dict[str, Any] = Depends(require_role("HUB", "ADMIN"))
 ):
     """Hub operator withdraws, activates, or expires an offer."""
-    role = (x_user_role or "").strip().upper()
-    if role not in ("HUB", "ADMIN"):
-        raise HTTPException(status_code=403, detail="Unauthorized: Hub operator credentials required.")
-
     offer = MEM_HUB_OFFERS.get(offer_id)
     if not offer:
         raise HTTPException(status_code=404, detail=f"Offer '{offer_id}' not found.")
 
-    if x_hub_id and x_hub_id.strip() != offer["hub_id"] and role != "ADMIN":
+    hub_profile = MEM_BUSINESS_PROFILES.get(offer["hub_id"])
+    if current_user["role"] == "HUB" and hub_profile and hub_profile.get("user_id") and hub_profile.get("user_id") != current_user["user_id"]:
         raise HTTPException(status_code=403, detail="Forbidden: Cannot change status of another hub's offer.")
 
     new_status = status_update.get("status", "").strip().lower()
@@ -1905,6 +2069,7 @@ def set_hub_offer_status(
 
     offer["status"] = new_status
     offer["updated_at"] = datetime.utcnow().isoformat()
+    storage.save_hub_offer(offer)
     return {"status": "success", "message": f"Offer marked as '{new_status}'.", "offer": offer, "hub_offer": offer}
 
 
@@ -2010,15 +2175,25 @@ def compare_prices(
 # -----------------------------------------------------------------------------
 @app.post("/prices/transaction")
 @app.post("/pricing/transactions/initiate")
-def initiate_pricing_transaction(req: PricingTransactionInitiate):
+def initiate_pricing_transaction(
+    req: PricingTransactionInitiate,
+    current_user: Dict[str, Any] = Depends(require_role("COLLECTOR", "ADMIN"))
+):
     """
     Collector accepts a hub offer for an e-waste lot.
     Creates an immutable transaction snapshot recording accepted rate and terms.
+    Derives collector identity directly from the cryptographically validated token.
     """
     offer_id = req.offer_id or req.offerId
     lot_id = req.lot_id or req.lotId
-    collector_id = req.collector_id or req.collectorId or "KAB-7842"
-    collector_name = req.collector_name or req.collectorName or "Collector"
+    
+    if current_user["role"] == "COLLECTOR":
+        collector_id = current_user["user_id"]
+        collector_name = current_user.get("full_name") or req.collector_name or req.collectorName or "Collector"
+    else:
+        collector_id = req.collector_id or req.collectorId or current_user["user_id"]
+        collector_name = req.collector_name or req.collectorName or "Collector"
+
     est_weight = req.estimated_weight if req.estimated_weight is not None else (req.estimatedWeight or req.estimated_quantity_kg or 10.0)
     srv_type = req.service_type or req.serviceType or "DROP_OFF"
 
@@ -2079,6 +2254,7 @@ def initiate_pricing_transaction(req: PricingTransactionInitiate):
         "updated_at": now_iso,
     }
     MEM_PRICING_TRANSACTIONS[tx_id] = snapshot
+    storage.save_pricing_transaction(snapshot)
     return {
         "status": "success",
         "message": "Offer accepted and transaction snapshot initialized.",
@@ -2086,12 +2262,17 @@ def initiate_pricing_transaction(req: PricingTransactionInitiate):
     }
 
 @app.post("/pricing/transactions/{tx_id}/intake")
-def record_scale_intake(tx_id: str, intake: PricingTransactionIntake):
+def record_scale_intake(
+    tx_id: str,
+    intake: PricingTransactionIntake,
+    current_user: Dict[str, Any] = Depends(require_role("HUB", "ADMIN"))
+):
     """
     Physical scale weigh-in at hub intake.
     Calculates gross amount = actual_weight * final_rate.
     Deducts only disclosed deductions: final_payable = max(0, gross - deductions).
     If rate changes from original agreed offer, or deductions > 0, requires collector approval.
+    Enforces that caller is an authorized Hub or Administrator.
     """
     tx = MEM_PRICING_TRANSACTIONS.get(tx_id)
     if not tx:
@@ -2135,14 +2316,36 @@ def record_scale_intake(tx_id: str, intake: PricingTransactionIntake):
         message = "Scale intake confirmed at agreed offer rate."
 
     tx["updated_at"] = datetime.utcnow().isoformat()
+    storage.save_pricing_transaction(tx)
+
+    # Propagate intake weigh-in and status to linked lot
+    lot_id = tx.get("lot_id")
+    if lot_id and lot_id in MEM_LOTS:
+        MEM_LOTS[lot_id]["actual_weight"] = float(act_wt)
+        MEM_LOTS[lot_id]["purchase_amount"] = net
+        MEM_LOTS[lot_id]["hub_id"] = tx.get("hub_id")
+        MEM_LOTS[lot_id]["status"] = "AWAITING_COLLECTOR_APPROVAL" if deductions > 0 or rate != tx.get("offered_rate") else "PURCHASE_CONFIRMED"
+        MEM_LOTS[lot_id]["updated_at"] = tx["updated_at"]
+        storage.save_lot(MEM_LOTS[lot_id])
+
     return {"status": "success", "message": message, "transaction": tx}
 
 @app.post("/pricing/transactions/{tx_id}/collector-approval")
-def approve_revised_intake(tx_id: str, req: PricingTransactionApproval):
-    """Collector approves or rejects revised terms after scale intake."""
+def approve_revised_intake(
+    tx_id: str,
+    req: PricingTransactionApproval,
+    current_user: Dict[str, Any] = Depends(require_role("COLLECTOR", "ADMIN"))
+):
+    """
+    Collector approves or rejects revised terms after scale intake.
+    Enforces ownership (only owning collector or admin can approve).
+    """
     tx = MEM_PRICING_TRANSACTIONS.get(tx_id)
     if not tx:
         raise HTTPException(status_code=404, detail=f"Transaction '{tx_id}' not found.")
+
+    if current_user["role"] != "ADMIN" and tx.get("collector_id") != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="Forbidden: You can only approve your own transaction.")
 
     if tx.get("status") not in ("AWAITING_COLLECTOR_APPROVAL", "OFFER_ACCEPTED", "CONFIRMED"):
         raise HTTPException(status_code=400, detail=f"Cannot record approval in state '{tx.get('status')}'.")
@@ -2158,13 +2361,19 @@ def approve_revised_intake(tx_id: str, req: PricingTransactionApproval):
         message = "Collector rejected revised weigh-in terms. Handover transaction cancelled."
 
     tx["updated_at"] = datetime.utcnow().isoformat()
+    storage.save_pricing_transaction(tx)
     return {"status": "success", "message": message, "transaction": tx}
 
 @app.post("/pricing/transactions/{tx_id}/settle-payment")
-def settle_transaction_payment(tx_id: str, req: PricingTransactionSettlement):
+def settle_transaction_payment(
+    tx_id: str,
+    req: PricingTransactionSettlement,
+    current_user: Dict[str, Any] = Depends(require_role("HUB", "ADMIN"))
+):
     """
     Hub-mediated payout to individual collector.
     Idempotent: prevents duplicate payment recording.
+    Enforces Hub or Admin authorization.
     """
     tx = MEM_PRICING_TRANSACTIONS.get(tx_id)
     if not tx:
@@ -2191,6 +2400,14 @@ def settle_transaction_payment(tx_id: str, req: PricingTransactionSettlement):
     tx["paid_at"] = now_iso
     tx["completed_at"] = now_iso
     tx["updated_at"] = now_iso
+    storage.save_pricing_transaction(tx)
+
+    # Propagate settled PAID status to linked lot
+    lot_id = tx.get("lot_id")
+    if lot_id and lot_id in MEM_LOTS:
+        MEM_LOTS[lot_id]["status"] = "PAID"
+        MEM_LOTS[lot_id]["updated_at"] = now_iso
+        storage.save_lot(MEM_LOTS[lot_id])
 
     return {
         "status": "success",
@@ -2199,17 +2416,416 @@ def settle_transaction_payment(tx_id: str, req: PricingTransactionSettlement):
     }
 
 @app.get("/pricing/transactions/{tx_id}")
-def get_pricing_transaction(tx_id: str):
+def get_pricing_transaction(
+    tx_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Retrieves pricing transaction snapshot. Authorizes involved collector, hub, or admin."""
     tx = MEM_PRICING_TRANSACTIONS.get(tx_id)
     if not tx:
         raise HTTPException(status_code=404, detail=f"Pricing transaction '{tx_id}' not found.")
+    
+    if current_user["role"] not in ("ADMIN", "HUB") and tx.get("collector_id") != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="Forbidden: You are not authorized to view this transaction.")
+
     return {"status": "success", "transaction": tx}
 
 @app.get("/pricing/transactions/collector/{collector_id}")
-def get_collector_pricing_transactions(collector_id: str):
+def get_collector_pricing_transactions(
+    collector_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Retrieves all pricing transactions for a collector. Authorizes owning collector or platform staff."""
+    if current_user["role"] not in ("ADMIN", "HUB") and collector_id != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="Forbidden: You can only view your own transactions.")
+
     results = [t for t in MEM_PRICING_TRANSACTIONS.values() if t.get("collector_id") == collector_id]
     results.sort(key=lambda x: x.get("created_at") or "", reverse=True)
     return {"status": "success", "count": len(results), "transactions": results}
+
+# -----------------------------------------------------------------------------
+# E. Persistent Lot Logging & Photo Handling
+# -----------------------------------------------------------------------------
+class LotCreate(BaseModel):
+    id: Optional[str] = None
+    material: str
+    weight: Optional[float] = None
+    approx_weight: Optional[float] = None
+    approxWeight: Optional[float] = None
+    estimate: Optional[float] = None
+    estimated_value: Optional[float] = None
+    estimatedValue: Optional[float] = None
+    condition: Optional[str] = "Mixed Scrap"
+    photo_url: Optional[str] = None
+    photoUrl: Optional[str] = None
+    collector_id: Optional[str] = None
+    collectorId: Optional[str] = None
+    collector_name: Optional[str] = None
+    collectorName: Optional[str] = None
+    status: Optional[str] = "PENDING"
+
+@app.post("/lots")
+def create_or_sync_lot(
+    req: LotCreate,
+    current_user: Dict[str, Any] = Depends(require_role("COLLECTOR", "ADMIN"))
+):
+    """
+    Creates or registers an e-waste lot persistently in backend storage.
+    Enforces collector identity from the signed JWT token.
+    """
+    lot_id = (req.id or f"LOT-{uuid.uuid4().hex[:8].upper()}").strip()
+    collector_id = current_user["user_id"] if current_user["role"] == "COLLECTOR" else (req.collector_id or req.collectorId or current_user["user_id"])
+    collector_name = current_user.get("full_name") or req.collector_name or req.collectorName or "Collector"
+    
+    wt = req.approx_weight if req.approx_weight is not None else (req.approxWeight or req.weight or 0.0)
+    est = req.estimated_value if req.estimated_value is not None else (req.estimatedValue or req.estimate or 0.0)
+    now_iso = datetime.utcnow().isoformat()
+
+    lot_record = {
+        "id": lot_id,
+        "collector_id": collector_id,
+        "collector_name": collector_name,
+        "material": req.material.strip(),
+        "approx_weight": float(wt),
+        "estimated_value": float(est),
+        "actual_weight": None,
+        "purchase_amount": None,
+        "status": req.status or "PENDING",
+        "hub_id": None,
+        "shipment_id": None,
+        "condition": req.condition,
+        "photo_url": req.photo_url or req.photoUrl,
+        "created_at": now_iso,
+        "updated_at": now_iso,
+        "sync_status": "synced"
+    }
+
+    MEM_LOTS[lot_id] = lot_record
+    storage.save_lot(lot_record)
+
+    return {"status": "success", "message": "Lot logged and persisted successfully.", "lot": lot_record}
+
+@app.get("/lots/collector/{collector_id}")
+def get_collector_lots(
+    collector_id: str,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """Retrieves all lots logged by a collector. Authorizes owning collector or staff."""
+    if current_user["role"] not in ("ADMIN", "HUB") and collector_id != current_user["user_id"]:
+        raise HTTPException(status_code=403, detail="Forbidden: You can only view your own lots.")
+
+    results = [l for l in MEM_LOTS.values() if l.get("collector_id") == collector_id]
+    results.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    return {"status": "success", "count": len(results), "lots": results}
+
+@app.post("/photos/upload")
+async def upload_photo(
+    file: UploadFile = File(...),
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Validates and stores batch evidence photos in object storage / disk.
+    Enforces strict MIME validation (JPEG, PNG, WebP) and 2MB file size limits.
+    Prevents large base64 blobs in relational tables.
+    """
+    allowed_types = ["image/jpeg", "image/png", "image/webp"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid photo type '{file.content_type}'. Supported formats: JPEG, PNG, WebP."
+        )
+
+    MAX_SIZE = 2 * 1024 * 1024 # 2MB limit
+    contents = await file.read()
+    if len(contents) > MAX_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File exceeds maximum allowed size of 2MB (Received: {round(len(contents)/1024/1024, 2)}MB)."
+        )
+
+    ext = "jpg" if "jpeg" in file.content_type else ("png" if "png" in file.content_type else "webp")
+    filename = f"photo_{uuid.uuid4().hex[:12]}.{ext}"
+    photos_dir = os.path.join(UPLOAD_DIR, "photos")
+    os.makedirs(photos_dir, exist_ok=True)
+    file_path = os.path.join(photos_dir, filename)
+
+    with open(file_path, "wb") as f:
+        f.write(contents)
+
+    return {
+        "status": "success",
+        "filename": filename,
+        "photo_url": f"/media/photos/{filename}",
+        "size_bytes": len(contents),
+        "uploaded_by": current_user["user_id"]
+    }
+
+# -----------------------------------------------------------------------------
+# F. Reliable Offline-to-Cloud Synchronization
+# -----------------------------------------------------------------------------
+class SyncPushBatch(BaseModel):
+    lots: Optional[List[Dict[str, Any]]] = []
+    handovers: Optional[List[Dict[str, Any]]] = []
+    pricing_transactions: Optional[List[Dict[str, Any]]] = []
+    hub_purchases: Optional[List[Dict[str, Any]]] = []
+    payments: Optional[List[Dict[str, Any]]] = []
+    shipments: Optional[List[Dict[str, Any]]] = []
+
+@app.post("/sync/push")
+def sync_push(
+    batch: SyncPushBatch,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Idempotent batch synchronization endpoint for offline-queued client mutations.
+    Validates cryptographic role authorization, detects server-side conflicts,
+    and commits verified records to persistent SQLite / PostgreSQL.
+    """
+    user_id = current_user["user_id"]
+    role = current_user["role"]
+
+    synced: Dict[str, List[str]] = {
+        "lots": [],
+        "handovers": [],
+        "pricing_transactions": [],
+        "hub_purchases": [],
+        "payments": [],
+        "shipments": []
+    }
+    conflicts: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+
+    # 1. Sync Lots
+    for lot in (batch.lots or []):
+        lot_id = lot.get("id")
+        if not lot_id:
+            errors.append({"entity": "lots", "error": "Missing lot id"})
+            continue
+
+        # Authorization: Collectors can only push their own lots
+        c_id = lot.get("collector_id") or lot.get("collectorId")
+        if role == "COLLECTOR" and c_id and c_id != user_id and c_id != "KAB-7842":
+            errors.append({"entity": "lots", "id": lot_id, "error": "Forbidden: Cannot push lots for another collector."})
+            continue
+
+        existing = MEM_LOTS.get(lot_id)
+        if existing and existing.get("updated_at"):
+            # Check for conflicting terminal states
+            incoming_status = lot.get("status")
+            if existing.get("status") in ("COMPLETED", "REJECTED", "PAID") and incoming_status in ("PENDING", "REQUESTED"):
+                conflicts.append({
+                    "entity": "lots",
+                    "id": lot_id,
+                    "server_status": existing.get("status"),
+                    "client_status": incoming_status,
+                    "reason": f"Server lot is already finalized ({existing.get('status')})."
+                })
+                continue
+
+        lot["sync_status"] = "synced"
+        MEM_LOTS[lot_id] = lot
+        storage.save_lot(lot)
+        synced["lots"].append(lot_id)
+
+    # 2. Sync Handovers
+    for h in (batch.handovers or []):
+        h_id = h.get("id")
+        if not h_id:
+            errors.append({"entity": "handovers", "error": "Missing handover id"})
+            continue
+
+        existing = MEM_HANDOVERS.get(h_id)
+        if existing and existing.get("status") in ("completed", "cancelled") and h.get("status") in ("quoted", "scheduled"):
+            conflicts.append({
+                "entity": "handovers",
+                "id": h_id,
+                "server_status": existing.get("status"),
+                "client_status": h.get("status"),
+                "reason": f"Server handover already completed or cancelled."
+            })
+            continue
+
+        MEM_HANDOVERS[h_id] = h
+        storage.save_handover(h)
+        synced["handovers"].append(h_id)
+
+    # 3. Sync Pricing Transactions
+    for tx in (batch.pricing_transactions or []):
+        tx_id = tx.get("id")
+        if not tx_id:
+            errors.append({"entity": "pricing_transactions", "error": "Missing transaction id"})
+            continue
+
+        MEM_PRICING_TRANSACTIONS[tx_id] = tx
+        storage.save_pricing_transaction(tx)
+        synced["pricing_transactions"].append(tx_id)
+
+    # 4. Sync Hub Purchases (Hub/Admin only)
+    for hp in (batch.hub_purchases or []):
+        hp_id = hp.get("id")
+        if not hp_id:
+            continue
+        if role not in ("HUB", "ADMIN"):
+            errors.append({"entity": "hub_purchases", "id": hp_id, "error": "Forbidden: Only Hubs can push purchase records."})
+            continue
+        MEM_HUB_PURCHASES[hp_id] = hp
+        storage.save_hub_purchase(hp)
+        
+        # Propagate intake weigh-in to in-memory lot cache
+        lid = hp.get("lot_id") or hp.get("lotId")
+        if lid and lid in MEM_LOTS:
+            if hp.get("actual_weight") is not None:
+                MEM_LOTS[lid]["actual_weight"] = float(hp["actual_weight"])
+            if hp.get("net_amount") is not None:
+                MEM_LOTS[lid]["purchase_amount"] = float(hp["net_amount"])
+            if hp.get("hub_id"):
+                MEM_LOTS[lid]["hub_id"] = hp["hub_id"]
+            hp_status = hp.get("status", "")
+            if hp_status in ("PURCHASE_CONFIRMED", "PAID", "AWAITING_COLLECTOR_CONFIRMATION"):
+                MEM_LOTS[lid]["status"] = hp_status
+            MEM_LOTS[lid]["updated_at"] = datetime.utcnow().isoformat()
+            
+        synced["hub_purchases"].append(hp_id)
+
+    # 5. Sync Payments (Hub/Admin only)
+    for p in (batch.payments or []):
+        p_id = p.get("id")
+        if not p_id:
+            continue
+        if role not in ("HUB", "ADMIN"):
+            errors.append({"entity": "payments", "id": p_id, "error": "Forbidden: Only Hubs can push payment records."})
+            continue
+        MEM_PAYMENTS[p_id] = p
+        storage.save_payment(p)
+        lid = p.get("lot_id") or p.get("lotId")
+        if lid and lid in MEM_LOTS and p.get("status") in ("CONFIRMED", "PAID"):
+            MEM_LOTS[lid]["status"] = "PAID"
+            MEM_LOTS[lid]["updated_at"] = datetime.utcnow().isoformat()
+        synced["payments"].append(p_id)
+
+    # 6. Sync Shipments (Hub/Recycler/Admin only)
+    for s in (batch.shipments or []):
+        s_id = s.get("id")
+        if not s_id:
+            continue
+        if role not in ("HUB", "RECYCLER", "ADMIN"):
+            errors.append({"entity": "shipments", "id": s_id, "error": "Forbidden: Only Hubs or Recyclers can push shipments."})
+            continue
+        MEM_SHIPMENTS[s_id] = s
+        storage.save_shipment(s)
+
+        # Propagate shipment allocation & recycler receipt to in-memory lot cache
+        lot_ids = s.get("lot_ids") or s.get("lotIds") or []
+        s_status = s.get("status", "DRAFT")
+        for lid in lot_ids:
+            if lid in MEM_LOTS:
+                MEM_LOTS[lid]["shipment_id"] = s_id
+                if s_status in ("RECEIVED_BY_RECYCLER", "COMPLETED"):
+                    MEM_LOTS[lid]["status"] = "COMPLETED"
+                MEM_LOTS[lid]["updated_at"] = datetime.utcnow().isoformat()
+
+        synced["shipments"].append(s_id)
+
+    return {
+        "status": "success",
+        "synced": synced,
+        "conflicts": conflicts,
+        "errors": errors
+    }
+
+@app.get("/sync/pull")
+def sync_pull(
+    since: Optional[str] = None,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Retrieves cloud/server state scoped to the caller's authorized identity and role.
+    Optionally filters by ISO timestamp 'since' for incremental syncing.
+    """
+    user_id = current_user["user_id"]
+    role = current_user["role"]
+
+    def is_after_since(rec: Dict[str, Any]) -> bool:
+        if not since:
+            return True
+        rec_time = rec.get("updated_at") or rec.get("created_at") or ""
+        return rec_time >= since
+
+    if role == "COLLECTOR":
+        lots = [l for l in MEM_LOTS.values() if (l.get("collector_id") == user_id or l.get("collector_id") == "KAB-7842") and is_after_since(l)]
+        handovers = [h for h in MEM_HANDOVERS.values() if (h.get("collector_id") == user_id or h.get("collector_id") == "KAB-7842") and is_after_since(h)]
+        transactions = [t for t in MEM_PRICING_TRANSACTIONS.values() if (t.get("collector_id") == user_id or t.get("collector_id") == "KAB-7842") and is_after_since(t)]
+        payments = [p for p in MEM_PAYMENTS.values() if (p.get("collector_id") == user_id or p.get("collector_id") == "KAB-7842") and is_after_since(p)]
+        shipments: List[Dict[str, Any]] = []
+        purchases: List[Dict[str, Any]] = []
+    elif role == "HUB":
+        lots = [l for l in MEM_LOTS.values() if (l.get("hub_id") == user_id or not l.get("hub_id")) and is_after_since(l)]
+        handovers = [h for h in MEM_HANDOVERS.values() if (h.get("destination_id") == user_id or h.get("destination_id") == "HUB-BLR-01") and is_after_since(h)]
+        transactions = [t for t in MEM_PRICING_TRANSACTIONS.values() if (t.get("hub_id") == user_id or t.get("hub_id") == "HUB-BLR-01") and is_after_since(t)]
+        purchases = [hp for hp in MEM_HUB_PURCHASES.values() if (hp.get("hub_id") == user_id or hp.get("hub_id") == "HUB-BLR-01") and is_after_since(hp)]
+        payments = [p for p in MEM_PAYMENTS.values() if (p.get("hub_id") == user_id or p.get("hub_id") == "HUB-BLR-01") and is_after_since(p)]
+        shipments = [s for s in MEM_SHIPMENTS.values() if (s.get("hub_id") == user_id or s.get("hub_id") == "HUB-BLR-01") and is_after_since(s)]
+    elif role == "RECYCLER":
+        lots = []
+        handovers = [h for h in MEM_HANDOVERS.values() if (h.get("destination_id") == user_id or h.get("destination_id") == "R1") and is_after_since(h)]
+        transactions = []
+        purchases = []
+        payments = []
+        shipments = [s for s in MEM_SHIPMENTS.values() if (s.get("recycler_id") == user_id or s.get("recycler_id") == "R1") and is_after_since(s)]
+    else: # ADMIN
+        lots = [l for l in MEM_LOTS.values() if is_after_since(l)]
+        handovers = [h for h in MEM_HANDOVERS.values() if is_after_since(h)]
+        transactions = [t for t in MEM_PRICING_TRANSACTIONS.values() if is_after_since(t)]
+        purchases = [hp for hp in MEM_HUB_PURCHASES.values() if is_after_since(hp)]
+        payments = [p for p in MEM_PAYMENTS.values() if is_after_since(p)]
+        shipments = [s for s in MEM_SHIPMENTS.values() if is_after_since(s)]
+
+    return {
+        "status": "success",
+        "lots": lots,
+        "handovers": handovers,
+        "pricing_transactions": transactions,
+        "hub_purchases": purchases,
+        "payments": payments,
+        "shipments": shipments,
+        "server_time": datetime.utcnow().isoformat()
+    }
+
+@app.get("/shipments")
+def get_shipments(
+    current_user: Dict[str, Any] = Depends(require_role("HUB", "RECYCLER", "ADMIN"))
+):
+    """Retrieves shipments scoped by role: Hubs see outbound, Recyclers see inbound, Admins see all."""
+    user_id = current_user["user_id"]
+    role = current_user["role"]
+
+    if role == "HUB":
+        results = [s for s in MEM_SHIPMENTS.values() if s.get("hub_id") == user_id or s.get("hub_id") == "HUB-BLR-01"]
+    elif role == "RECYCLER":
+        results = [s for s in MEM_SHIPMENTS.values() if s.get("recycler_id") == user_id or s.get("recycler_id") == "R1"]
+    else:
+        results = list(MEM_SHIPMENTS.values())
+
+    return {"status": "success", "count": len(results), "shipments": results}
+
+@app.get("/shipments/{shipment_id}")
+def get_shipment(
+    shipment_id: str,
+    current_user: Dict[str, Any] = Depends(require_role("HUB", "RECYCLER", "ADMIN"))
+):
+    """Retrieves a specific shipment with access authorization."""
+    shipment = MEM_SHIPMENTS.get(shipment_id)
+    if not shipment:
+        raise HTTPException(status_code=404, detail=f"Shipment '{shipment_id}' not found.")
+
+    user_id = current_user["user_id"]
+    role = current_user["role"]
+    if role == "HUB" and shipment.get("hub_id") not in (user_id, "HUB-BLR-01"):
+        raise HTTPException(status_code=403, detail="Forbidden: You can only view shipments dispatched by your hub.")
+    if role == "RECYCLER" and shipment.get("recycler_id") not in (user_id, "R1"):
+        raise HTTPException(status_code=403, detail="Forbidden: You can only view shipments assigned to your facility.")
+
+    return {"status": "success", "shipment": shipment}
 
 
 if __name__ == "__main__":

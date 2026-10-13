@@ -52,8 +52,9 @@ await test('Public registration rejects ADMIN role with HTTP 403 Forbidden', asy
 
 const collectorEmail = `kabadiwala_${Date.now()}@test.com`;
 let collectorUserId = null;
+let collectorToken = null;
 
-await test('Collector registration creates active account', async () => {
+await test('Collector registration creates active account with signed JWT token', async () => {
   const res = await fetch(`${API_BASE}/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -69,7 +70,9 @@ await test('Collector registration creates active account', async () => {
   const data = await res.json();
   assert.strictEqual(data.user.role, 'COLLECTOR');
   assert.strictEqual(data.verification_status, 'active');
+  assert.ok(data.token, 'Registration must issue a signed JWT token');
   collectorUserId = data.user.id;
+  collectorToken = data.token;
 });
 
 await test('Duplicate email registration is rejected with HTTP 400', async () => {
@@ -91,8 +94,9 @@ await test('Duplicate email registration is rejected with HTTP 400', async () =>
 const hubEmail = `hub_operator_${Date.now()}@test.com`;
 let hubProfileId = null;
 let hubAppId = null;
+let hubToken = null;
 
-await test('Hub registration creates pending_verification account', async () => {
+await test('Hub registration creates pending_verification account with JWT token', async () => {
   const res = await fetch(`${API_BASE}/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -115,8 +119,10 @@ await test('Hub registration creates pending_verification account', async () => 
   assert.strictEqual(data.verification_status, 'pending_verification');
   assert.ok(data.business_profile);
   assert.strictEqual(data.business_profile.status, 'pending_verification');
+  assert.ok(data.token, 'Must return JWT token');
   hubProfileId = data.business_profile.id;
   hubAppId = data.verification_application.id;
+  hubToken = data.token;
 });
 
 const recEmail = `recycler_${Date.now()}@test.com`;
@@ -172,13 +178,49 @@ await test('Login with valid credentials returns user profile, role, token, and 
   assert.ok(data.token, 'Token must be returned on login');
 });
 
-await test('Unverified Hub cannot publish buying offers (HTTP 403 Forbidden)', async () => {
+// Admin authentication setup
+let adminToken = null;
+await test('Admin signs in and receives signed Administrator JWT token', async () => {
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: 'admin@kabadiwala.in',
+      password: 'Admin@123'
+    })
+  });
+  assert.strictEqual(res.status, 200, `Expected 200, got ${res.status}`);
+  const data = await res.json();
+  assert.strictEqual(data.user.role, 'ADMIN');
+  assert.ok(data.token, 'Admin token must be returned');
+  adminToken = data.token;
+});
+
+await test('Protected admin endpoint rejects request with missing Bearer token (HTTP 401)', async () => {
+  const res = await fetch(`${API_BASE}/admin/applications`);
+  assert.strictEqual(res.status, 401, `Expected 401, got ${res.status}`);
+});
+
+await test('Protected admin endpoint rejects forged/invalid Bearer token (HTTP 401)', async () => {
+  const res = await fetch(`${API_BASE}/admin/applications`, {
+    headers: { 'Authorization': 'Bearer invalid.tampered.token_signature_xyz' }
+  });
+  assert.strictEqual(res.status, 401, `Expected 401, got ${res.status}`);
+});
+
+await test('Collector token calling Admin endpoint is rejected with HTTP 403 Forbidden', async () => {
+  const res = await fetch(`${API_BASE}/admin/applications`, {
+    headers: { 'Authorization': `Bearer ${collectorToken}` }
+  });
+  assert.strictEqual(res.status, 403, `Expected 403, got ${res.status}`);
+});
+
+await test('Unverified Hub token cannot publish buying offers (HTTP 403 Forbidden)', async () => {
   const res = await fetch(`${API_BASE}/hub/offers`, {
     method: 'POST',
     headers: { 
       'Content-Type': 'application/json',
-      'X-User-Role': 'HUB',
-      'X-Hub-Id': hubProfileId
+      'Authorization': `Bearer ${hubToken}`
     },
     body: JSON.stringify({
       hub_id: hubProfileId,
@@ -201,10 +243,13 @@ await test('Unverified Hub cannot publish buying offers (HTTP 403 Forbidden)', a
   assert.ok(data.detail.includes('pending_verification') || data.detail.includes('Only officially approved hubs'));
 });
 
-await test('Admin can review and approve Hub in verification queue', async () => {
+await test('Admin with valid Bearer token can review and approve Hub in verification queue', async () => {
   const res = await fetch(`${API_BASE}/admin/applications/${hubAppId}/review`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-User-Role': 'ADMIN' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${adminToken}`
+    },
     body: JSON.stringify({
       action: 'approve',
       officialRegistryRef: 'CPCB/HUB/GRANT/2026/044',
@@ -216,13 +261,12 @@ await test('Admin can review and approve Hub in verification queue', async () =>
   assert.strictEqual(data.business_profile.status, 'approved');
 });
 
-await test('Approved Hub can now publish buying offers', async () => {
+await test('Approved Hub with valid Bearer token can now publish buying offers', async () => {
   const res = await fetch(`${API_BASE}/hub/offers`, {
     method: 'POST',
     headers: { 
       'Content-Type': 'application/json',
-      'X-User-Role': 'HUB',
-      'X-Hub-Id': hubProfileId
+      'Authorization': `Bearer ${hubToken}`
     },
     body: JSON.stringify({
       hub_id: hubProfileId,
@@ -244,13 +288,6 @@ await test('Approved Hub can now publish buying offers', async () => {
   const data = await res.json();
   assert.ok(data.offer.id);
   assert.strictEqual(data.offer.rate, 280);
-});
-
-await test('Collector cannot call admin review endpoints (HTTP 403 Forbidden)', async () => {
-  const res = await fetch(`${API_BASE}/admin/applications`, {
-    headers: { 'X-User-Role': 'COLLECTOR' }
-  });
-  assert.strictEqual(res.status, 403, `Expected 403, got ${res.status}`);
 });
 
 // ─── 2. Frontend Structure & Guard Verification ──────────────────────

@@ -5,6 +5,7 @@ import {
   type HandoverServiceType,
   type HandoverStatus,
 } from './db';
+import { getAuthHeaders } from './authService';
 
 const API_BASE = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
 
@@ -309,7 +310,7 @@ export async function requestHandoverQuote(request: {
   try {
     const res = await fetch(`${API_BASE}/handovers/quote-request`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         lot_id: request.lotId,
         collector_id: request.collectorId,
@@ -440,6 +441,7 @@ export async function acceptHandoverQuote(
   try {
     const res = await fetch(`${API_BASE}/handovers/${handoverId}/accept`, {
       method: 'POST',
+      headers: getAuthHeaders(),
     });
     if (res.ok) {
       const data = await res.json();
@@ -482,7 +484,7 @@ export async function updateHandoverStatus(
   try {
     const res = await fetch(`${API_BASE}/handovers/${handoverId}/status`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         status: update.status,
         actual_weight: update.actualWeight,
@@ -540,7 +542,9 @@ export async function getCollectorHandovers(
   collectorId: string
 ): Promise<HandoverRequest[]> {
   try {
-    const res = await fetch(`${API_BASE}/handovers/collector/${collectorId}`);
+    const res = await fetch(`${API_BASE}/handovers/collector/${collectorId}`, {
+      headers: getAuthHeaders(),
+    });
     if (res.ok) {
       const data = await res.json();
       const serverHandovers = (data.handovers || []) as HandoverRequest[];
