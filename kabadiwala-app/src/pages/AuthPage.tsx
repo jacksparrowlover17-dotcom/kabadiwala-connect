@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { 
   register, 
   login, 
@@ -26,10 +26,24 @@ const MATERIAL_CHOICES = [
 
 export default function AuthPage({ onAuthSuccess }: { onAuthSuccess?: () => void }) {
   const navigate = useNavigate();
-  const [mode, setMode] = useState<'LOGIN' | 'REGISTER'>('LOGIN');
+  const [searchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const roleParam = searchParams.get('role')?.toUpperCase();
+
+  const [mode, setMode] = useState<'LOGIN' | 'REGISTER'>(tabParam === 'register' ? 'REGISTER' : 'LOGIN');
   
   // Registration form state
-  const [role, setRole] = useState<'COLLECTOR' | 'HUB' | 'RECYCLER'>('COLLECTOR');
+  const [role, setRole] = useState<'COLLECTOR' | 'HUB' | 'RECYCLER'>(
+    roleParam === 'HUB' || roleParam === 'RECYCLER' ? roleParam : 'COLLECTOR'
+  );
+
+  useEffect(() => {
+    if (tabParam === 'register') setMode('REGISTER');
+    if (tabParam === 'login') setMode('LOGIN');
+    if (roleParam === 'HUB' || roleParam === 'RECYCLER' || roleParam === 'COLLECTOR') {
+      setRole(roleParam as any);
+    }
+  }, [tabParam, roleParam]);
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');

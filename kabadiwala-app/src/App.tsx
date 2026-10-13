@@ -1,8 +1,8 @@
 import React, { useEffect, useState, createContext, useContext } from 'react';
-import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import {
   Home, PlusSquare, ShieldCheck, Database, UserCircle,
-  Building2, Truck, Scale, TrendingUp, Menu, X, Recycle, ChevronDown,
+  Building2, Truck, Scale, TrendingUp, Menu, X, Recycle,
   LogIn, LogOut, Compass
 } from 'lucide-react';
 import HomePage from './pages/HomePage';
@@ -19,14 +19,26 @@ import VerificationStatusPage from './pages/VerificationStatusPage';
 import AdminVerificationPage from './pages/AdminVerificationPage';
 import DestinationFinderPage from './pages/DestinationFinderPage';
 import MyHandoversPage from './pages/MyHandoversPage';
+import WelcomeLandingPage from './pages/WelcomeLandingPage';
 import { db } from './lib/db';
 import { syncDataOnline } from './lib/supabase';
-import { getCurrentSession, logout } from './lib/authService';
+import { getCurrentSession, logout, type AuthSession } from './lib/authService';
 
 export type Role = 'COLLECTOR' | 'HUB' | 'RECYCLER' | 'ADMIN';
 
-interface RoleContextType { role: Role; setRole: (r: Role) => void; }
-export const RoleContext = createContext<RoleContextType>({ role: 'COLLECTOR', setRole: () => {} });
+interface RoleContextType { 
+  role: Role; 
+  setRole: (r: Role) => void;
+  session: AuthSession | null;
+  refreshSession: () => void;
+}
+
+export const RoleContext = createContext<RoleContextType>({ 
+  role: 'COLLECTOR', 
+  setRole: () => {},
+  session: null,
+  refreshSession: () => {}
+});
 
 // ─── Role metadata ────────────────────────────────────────────
 const ROLE_META: Record<Role, { label: string; color: string; bg: string }> = {
@@ -66,20 +78,26 @@ const NAV_LINKS: Record<Role, { path: string; label: string; icon: React.ReactNo
   ],
 };
 
+const PUBLIC_NAV_LINKS: { path: string; label: string; icon: React.ReactNode }[] = [
+  { path: '/',       label: 'Welcome Portal',   icon: <Home size={18}/> },
+  { path: '/safety', label: 'Safety Guidelines', icon: <ShieldCheck size={18}/> },
+  { path: '/login',  label: 'Sign In / Register', icon: <LogIn size={18}/> },
+];
+
 // ─── Sidebar (Desktop) ────────────────────────────────────────
 function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { role, setRole } = useContext(RoleContext);
+  const { role, session, refreshSession } = useContext(RoleContext);
   const navigate = useNavigate();
   const location = useLocation();
-  const links = NAV_LINKS[role];
+  const links = session ? NAV_LINKS[role] : PUBLIC_NAV_LINKS;
   const meta = ROLE_META[role];
 
   const handleNav = (path: string) => { navigate(path); onClose(); };
-  const handleRoleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const r = e.target.value as Role;
-    setRole(r);
-    const first = NAV_LINKS[r][0].path;
-    navigate(first);
+
+  const handleLogout = () => {
+    logout();
+    refreshSession();
+    navigate('/');
     onClose();
   };
 
@@ -110,28 +128,48 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
           </button>
         </div>
 
-        {/* Role Switcher */}
-        <div className="px-4 py-3 border-b border-[#e2e8f0]">
-          <p className="text-[10px] font-bold text-[#64748b] uppercase tracking-wider mb-1.5">Active Role</p>
-          <div className="relative">
-            <select
-              value={role}
-              onChange={handleRoleChange}
-              className="w-full appearance-none px-3 py-2 pr-8 rounded-lg border border-[#e2e8f0] text-xs font-semibold text-[#1f2937] bg-white focus:outline-none focus:border-[#166534] cursor-pointer"
-              style={{ borderLeftWidth: 3, borderLeftColor: meta.color }}
-            >
-              <option value="COLLECTOR">Informal Collector (Kabadiwala)</option>
-              <option value="HUB">Collection Hub Operator</option>
-              <option value="RECYCLER">Formal Recycler (CPCB)</option>
-              <option value="ADMIN">Govt / Administrator</option>
-            </select>
-            <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-[#64748b] pointer-events-none"/>
+        {/* Account / Role Card */}
+        {session ? (
+          <div className="px-4 py-3 border-b border-[#e2e8f0]">
+            <p className="text-[10px] font-bold text-[#64748b] uppercase tracking-wider mb-1.5">Authenticated Account</p>
+            <div className="p-2.5 rounded-lg border border-slate-200 bg-slate-50 flex items-center gap-2.5">
+              <div 
+                className="w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs flex-shrink-0" 
+                style={{ background: meta.bg, color: meta.color }}
+              >
+                {role.slice(0, 2)}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-bold text-slate-800 truncate">{session.user.fullName}</p>
+                <p className="text-[10px] font-semibold" style={{ color: meta.color }}>{meta.label}</p>
+              </div>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="px-4 py-3 border-b border-[#e2e8f0]">
+            <p className="text-[10px] font-bold text-[#64748b] uppercase tracking-wider mb-2">Access Portal</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { navigate('/login?tab=login'); onClose(); }}
+                className="flex-1 py-1.5 px-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold text-center transition cursor-pointer"
+              >
+                Sign In
+              </button>
+              <button
+                onClick={() => { navigate('/login?tab=register'); onClose(); }}
+                className="flex-1 py-1.5 px-2 bg-white border border-emerald-700 text-emerald-800 hover:bg-emerald-50 rounded-lg text-xs font-bold text-center transition cursor-pointer"
+              >
+                Register
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Nav Links */}
         <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
-          <p className="section-label px-2 mb-2">{meta.label} Menu</p>
+          <p className="section-label px-2 mb-2">
+            {session ? `${meta.label} Menu` : 'Public Menu'}
+          </p>
           {links.map(l => {
             const active = location.pathname === l.path || (l.path !== '/' && location.pathname.startsWith(l.path));
             return (
@@ -147,8 +185,17 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
           })}
         </nav>
 
-        {/* Footer */}
-        <div className="px-4 py-3 border-t border-[#e2e8f0]">
+        {/* Footer with Logout */}
+        <div className="px-4 py-3 border-t border-[#e2e8f0] space-y-2">
+          {session && (
+            <button
+              onClick={handleLogout}
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+            >
+              <LogOut size={15} />
+              <span>Sign Out</span>
+            </button>
+          )}
           <p className="text-[10px] text-[#94a3b8] text-center font-mono">Offline-first · Dexie v4 · React 19</p>
         </div>
       </aside>
@@ -158,17 +205,17 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
 
 // ─── Topbar ───────────────────────────────────────────────────
 function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
-  const { role } = useContext(RoleContext);
+  const { role, session, refreshSession } = useContext(RoleContext);
   const location = useLocation();
   const navigate = useNavigate();
-  const links = NAV_LINKS[role];
+  const links = session ? NAV_LINKS[role] : PUBLIC_NAV_LINKS;
   const meta = ROLE_META[role];
   const current = links.find(l => l.path === location.pathname) || links[0];
-  const session = getCurrentSession();
 
   const handleSignOut = () => {
     logout();
-    navigate('/login');
+    refreshSession();
+    navigate('/');
   };
 
   return (
@@ -199,10 +246,10 @@ function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
         {session ? (
           <div className="flex items-center gap-2">
             <button
-              onClick={() => navigate('/verification-status')}
+              onClick={() => navigate(session.user.role === 'COLLECTOR' ? '/' : '/verification-status')}
               className="badge text-[11px] hover:opacity-80 transition cursor-pointer"
               style={{ background: meta.bg, color: meta.color }}
-              title="View verification status"
+              title="View account profile"
             >
               <UserCircle size={12}/>
               <span>{session.user.fullName || meta.label}</span>
@@ -214,7 +261,7 @@ function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
             </button>
             <button
               onClick={handleSignOut}
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition"
+              className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer"
               title="Sign Out"
             >
               <LogOut size={14} />
@@ -222,16 +269,18 @@ function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
           </div>
         ) : (
           <div className="flex items-center gap-2">
-            <span className="badge text-[11px]" style={{ background: meta.bg, color: meta.color }}>
-              <UserCircle size={12}/>
-              {meta.label}
-            </span>
             <button
-              onClick={() => navigate('/login')}
-              className="px-2.5 py-1 text-xs font-semibold bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg flex items-center gap-1 transition"
+              onClick={() => navigate('/login?tab=login')}
+              className="px-2.5 py-1 text-xs font-semibold border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-lg flex items-center gap-1 transition cursor-pointer"
             >
               <LogIn size={13} />
-              <span className="hidden sm:inline">Sign In / Register</span>
+              <span>Sign In</span>
+            </button>
+            <button
+              onClick={() => navigate('/login?tab=register')}
+              className="px-2.5 py-1 text-xs font-semibold bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg flex items-center gap-1 transition cursor-pointer"
+            >
+              <span className="hidden sm:inline">Register</span>
             </button>
           </div>
         )}
@@ -242,10 +291,10 @@ function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
 
 // ─── Bottom Nav (Mobile only) ─────────────────────────────────
 function BottomNav() {
-  const { role } = useContext(RoleContext);
+  const { role, session } = useContext(RoleContext);
   const navigate = useNavigate();
   const location = useLocation();
-  const links = NAV_LINKS[role];
+  const links = session ? NAV_LINKS[role] : PUBLIC_NAV_LINKS;
 
   return (
     <nav className="fixed bottom-0 inset-x-0 z-20 bg-white/95 backdrop-blur border-t border-[#e2e8f0] flex lg:hidden no-print safe-area-inset-bottom">
@@ -286,12 +335,73 @@ function Layout({ children }: { children: React.ReactNode }) {
   );
 }
 
+// ─── Protected Route Guard ────────────────────────────────────
+function ProtectedRoute({ 
+  allowedRoles, 
+  children 
+}: { 
+  allowedRoles?: Role[]; 
+  children: React.ReactNode; 
+}) {
+  const session = getCurrentSession();
+  const location = useLocation();
+
+  if (!session) {
+    return <Navigate to="/login?tab=login" state={{ from: location }} replace />;
+  }
+
+  if (allowedRoles && !allowedRoles.includes(session.user.role as Role)) {
+    const userRole = session.user.role as Role;
+    let target = '/';
+    if (userRole === 'ADMIN') target = '/admin/verifications';
+    else if (userRole === 'HUB') target = session.verificationStatus === 'approved' ? '/hub' : '/verification-status';
+    else if (userRole === 'RECYCLER') target = session.verificationStatus === 'approved' ? '/recycler' : '/verification-status';
+
+    return <Navigate to={target} replace />;
+  }
+
+  return <>{children}</>;
+}
+
+// ─── Root Index Route (Landing or Collector Home) ─────────────
+function RootIndexRoute() {
+  const session = getCurrentSession();
+
+  if (!session) {
+    return <WelcomeLandingPage />;
+  }
+
+  if (session.user.role === 'COLLECTOR') {
+    return <HomePage />;
+  }
+  if (session.user.role === 'HUB') {
+    return <Navigate to={session.verificationStatus === 'approved' ? "/hub" : "/verification-status"} replace />;
+  }
+  if (session.user.role === 'RECYCLER') {
+    return <Navigate to={session.verificationStatus === 'approved' ? "/recycler" : "/verification-status"} replace />;
+  }
+  if (session.user.role === 'ADMIN') {
+    return <Navigate to="/admin/verifications" replace />;
+  }
+
+  return <WelcomeLandingPage />;
+}
+
 // ─── Root App ─────────────────────────────────────────────────
 function App() {
-  const [role, setRole] = useState<Role>(() => {
-    const sess = getCurrentSession();
-    return (sess?.user?.role as Role) || 'COLLECTOR';
-  });
+  const [session, setSession] = useState<AuthSession | null>(() => getCurrentSession());
+  const role: Role = (session?.user?.role as Role) || 'COLLECTOR';
+
+  const refreshSession = () => {
+    setSession(getCurrentSession());
+  };
+
+  const setRole = (_r: Role) => {
+    // If admin, can view preview
+    if (session?.user?.role === 'ADMIN') {
+      // Allowed for admin review
+    }
+  };
 
   useEffect(() => {
     const handleOnline = async () => {
@@ -308,24 +418,40 @@ function App() {
   }, []);
 
   return (
-    <RoleContext.Provider value={{ role, setRole }}>
+    <RoleContext.Provider value={{ role, setRole, session, refreshSession }}>
       <BrowserRouter>
         <Layout>
           <Routes>
-            <Route path="/"                    element={<HomePage/>}/>
-            <Route path="/new"                 element={<NewLotPage/>}/>
-            <Route path="/find-partners"       element={<DestinationFinderPage/>}/>
-            <Route path="/handovers"           element={<MyHandoversPage/>}/>
-            <Route path="/handover/:id"        element={<HandoverPage/>}/>
-            <Route path="/hub"                 element={<HubDashboardPage/>}/>
-            <Route path="/hub/shipments"       element={<ShipmentAggregationPage/>}/>
-            <Route path="/recycler"            element={<RecyclerPage/>}/>
+            {/* Public Entry Points */}
+            <Route path="/"                    element={<RootIndexRoute/>}/>
+            <Route path="/welcome"             element={<WelcomeLandingPage/>}/>
+            <Route path="/login"               element={<AuthPage onAuthSuccess={refreshSession}/>}/>
             <Route path="/safety"              element={<SafetyPage/>}/>
-            <Route path="/prices"              element={<PriceBoardPage/>}/>
-            <Route path="/data"                element={<DataExportPage/>}/>
-            <Route path="/login"               element={<AuthPage/>}/>
-            <Route path="/verification-status" element={<VerificationStatusPage/>}/>
-            <Route path="/admin/verifications" element={<AdminVerificationPage/>}/>
+
+            {/* Protected: Informal Collector Screens */}
+            <Route path="/loads"               element={<ProtectedRoute allowedRoles={['COLLECTOR', 'ADMIN']}><HomePage/></ProtectedRoute>}/>
+            <Route path="/new"                 element={<ProtectedRoute allowedRoles={['COLLECTOR', 'ADMIN']}><NewLotPage/></ProtectedRoute>}/>
+            <Route path="/find-partners"       element={<ProtectedRoute allowedRoles={['COLLECTOR', 'ADMIN']}><DestinationFinderPage/></ProtectedRoute>}/>
+            <Route path="/handovers"           element={<ProtectedRoute allowedRoles={['COLLECTOR', 'ADMIN']}><MyHandoversPage/></ProtectedRoute>}/>
+            <Route path="/handover/:id"        element={<ProtectedRoute allowedRoles={['COLLECTOR', 'ADMIN']}><HandoverPage/></ProtectedRoute>}/>
+
+            {/* Protected: Hub Screens */}
+            <Route path="/hub"                 element={<ProtectedRoute allowedRoles={['HUB', 'ADMIN']}><HubDashboardPage/></ProtectedRoute>}/>
+            <Route path="/hub/shipments"       element={<ProtectedRoute allowedRoles={['HUB', 'ADMIN']}><ShipmentAggregationPage/></ProtectedRoute>}/>
+
+            {/* Protected: Formal Recycler Screens */}
+            <Route path="/recycler"            element={<ProtectedRoute allowedRoles={['RECYCLER', 'ADMIN']}><RecyclerPage/></ProtectedRoute>}/>
+
+            {/* Protected: Administrator Screens */}
+            <Route path="/admin/verifications" element={<ProtectedRoute allowedRoles={['ADMIN']}><AdminVerificationPage/></ProtectedRoute>}/>
+
+            {/* Protected: Common Authenticated Screens */}
+            <Route path="/prices"              element={<ProtectedRoute allowedRoles={['COLLECTOR', 'HUB', 'RECYCLER', 'ADMIN']}><PriceBoardPage/></ProtectedRoute>}/>
+            <Route path="/data"                element={<ProtectedRoute allowedRoles={['ADMIN', 'RECYCLER']}><DataExportPage/></ProtectedRoute>}/>
+            <Route path="/verification-status" element={<ProtectedRoute allowedRoles={['HUB', 'RECYCLER', 'ADMIN']}><VerificationStatusPage/></ProtectedRoute>}/>
+
+            {/* Catch-all */}
+            <Route path="*"                    element={<Navigate to="/" replace/>}/>
           </Routes>
         </Layout>
       </BrowserRouter>
