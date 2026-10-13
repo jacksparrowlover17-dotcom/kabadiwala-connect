@@ -105,7 +105,7 @@ export default function HomePage() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-5 space-y-5">
+    <div className="max-w-2xl mx-auto px-4 py-5 space-y-5 pb-28 sm:pb-12">
 
       {/* ─── Greeting Bar ─────────────────────────────── */}
       <div className="flex items-center justify-between">

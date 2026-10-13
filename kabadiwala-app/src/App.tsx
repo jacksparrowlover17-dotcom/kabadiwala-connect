@@ -163,11 +163,11 @@ function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
       </button>
 
       {/* Mobile brand */}
-      <div className="flex items-center gap-2 lg:hidden">
-        <div className="w-7 h-7 rounded-lg bg-[#166534] flex items-center justify-center">
+      <div className="flex items-center gap-2 min-w-0 lg:hidden">
+        <div className="w-7 h-7 rounded-lg bg-[#166534] flex items-center justify-center flex-shrink-0">
           <Recycle size={14} color="#fff"/>
         </div>
-        <span className="font-black text-sm text-[#1f2937]">Kabadiwala Connect</span>
+        <span className="font-black text-sm text-[#1f2937] truncate">Kabadiwala Connect</span>
       </div>
 
       {/* Desktop page title */}
@@ -176,9 +176,9 @@ function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
         <h1 className="text-base font-bold text-[#1f2937]">{current.label}</h1>
       </div>
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex items-center gap-2 flex-shrink-0">
         {/* Role badge */}
-        <span className="badge text-[11px] hidden sm:inline-flex" style={{ background: meta.bg, color: meta.color }}>
+        <span className="badge text-[11px]" style={{ background: meta.bg, color: meta.color }}>
           <UserCircle size={12}/>
           {meta.label}
         </span>

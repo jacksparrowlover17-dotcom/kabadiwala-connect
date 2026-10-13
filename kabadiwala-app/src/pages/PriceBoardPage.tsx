@@ -9,7 +9,7 @@ const PRICES = [
 
 export default function PriceBoardPage() {
   return (
-    <div className="max-w-2xl mx-auto px-4 py-5 space-y-5">
+    <div className="max-w-2xl mx-auto px-4 py-5 space-y-5 pb-28 sm:pb-12">
       <div>
         <h1 className="text-xl font-black text-[#1f2937]">Today's Prices</h1>
         <p className="text-sm text-[#64748b] mt-0.5">आज के भाव — Current market rates from verified buyers.</p>

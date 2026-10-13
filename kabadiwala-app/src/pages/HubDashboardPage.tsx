@@ -170,25 +170,41 @@ export default function HubDashboardPage() {
   ];
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-5 space-y-5">
+    <div className="max-w-2xl mx-auto px-4 py-5 space-y-5 pb-28 sm:pb-12">
 
       {/* Hub Header */}
-      <div className="kc-card p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2 mb-0.5">
-              <Building2 size={16} color="#1d4ed8"/>
-              <p className="font-black text-[#1f2937] text-base leading-tight">{currentHub.name}</p>
-              <span className="badge badge-warning">Demo</span>
+      <div className="kc-card p-4 space-y-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <div className="w-7 h-7 rounded-lg bg-[#dbeafe] text-[#1d4ed8] flex items-center justify-center flex-shrink-0">
+                <Building2 size={16} />
+              </div>
+              <h1 className="font-black text-[#1f2937] text-base leading-tight break-words">{currentHub.name}</h1>
+              <span className="badge badge-warning text-[10px]">Demo</span>
             </div>
-            <p className="text-xs text-[#64748b]">{currentHub.location}</p>
+            <p className="text-xs text-[#64748b] break-words">{currentHub.location}</p>
           </div>
+        </div>
+
+        {/* Hub Selector */}
+        <div className="pt-2 border-t border-[#e2e8f0]">
+          <label className="text-[10px] font-bold uppercase tracking-wider text-[#64748b] block mb-1">
+            Switch Godown Location
+          </label>
           <div className="relative">
-            <select value={activeHubId} onChange={e => setActiveHubId(e.target.value)}
-              className="appearance-none bg-[#f0fdf4] border border-[#dcfce7] text-[#166534] text-xs font-semibold px-3 pr-7 py-2 rounded-xl outline-none cursor-pointer">
-              {hubs.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
+            <select
+              value={activeHubId}
+              onChange={e => setActiveHubId(e.target.value)}
+              className="w-full appearance-none bg-[#f0fdf4] border border-[#bbf7d0] text-[#166534] text-xs font-bold px-3 pr-8 py-2 rounded-xl outline-none cursor-pointer truncate"
+            >
+              {hubs.map(h => (
+                <option key={h.id} value={h.id}>
+                  {h.name} ({h.location.split(',')[0]})
+                </option>
+              ))}
             </select>
-            <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-[#166534] pointer-events-none"/>
+            <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#166534] pointer-events-none" />
           </div>
         </div>
       </div>
@@ -221,14 +237,14 @@ export default function HubDashboardPage() {
 
       {/* Filters */}
       <div>
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 mb-3">
           <h2 className="font-bold text-[#1f2937] flex items-center gap-2">
             <Package size={16} color="#166534"/>Lot Intake ({filteredLots.length})
           </h2>
-          <div className="flex items-center gap-1.5">
-            <Filter size={13} color="#64748b"/>
+          <div className="flex items-center gap-1.5 w-full sm:w-auto">
+            <Filter size={13} color="#64748b" className="flex-shrink-0"/>
             <select value={materialFilter} onChange={e => setMaterialFilter(e.target.value)}
-              className="text-xs border border-[#e2e8f0] rounded-lg px-2 py-1.5 font-semibold text-[#1f2937] bg-white outline-none focus:border-[#166534]">
+              className="w-full sm:w-auto text-xs border border-[#e2e8f0] rounded-lg px-2.5 py-1.5 font-semibold text-[#1f2937] bg-white outline-none focus:border-[#166534]">
               {MATERIAL_OPTIONS.map(m => <option key={m}>{m}</option>)}
             </select>
           </div>

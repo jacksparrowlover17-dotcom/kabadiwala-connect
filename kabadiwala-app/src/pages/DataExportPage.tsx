@@ -162,7 +162,7 @@ export default function DataExportPage() {
   ];
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-5 space-y-6">
+    <div className="max-w-2xl mx-auto px-4 py-5 space-y-6 pb-28 sm:pb-12">
       <div>
         <h1 className="text-xl font-black text-[#1f2937]">Data Intelligence & EPR</h1>
         <p className="text-sm text-[#64748b] mt-0.5">Auditable datasets across the informal-to-formal collection chain.</p>
