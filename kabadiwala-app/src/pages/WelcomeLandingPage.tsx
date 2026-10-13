@@ -11,7 +11,8 @@ import {
   Scale,
   Leaf,
   Lock,
-  FileCheck2
+  FileCheck2,
+  Download
 } from 'lucide-react';
 import { getCurrentSession } from '../lib/authService';
 
@@ -57,7 +58,7 @@ export default function WelcomeLandingPage() {
           </p>
 
           {/* Primary Action Buttons */}
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4 max-w-md mx-auto">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4 max-w-lg mx-auto">
             {session ? (
               <button
                 onClick={handleEnterDashboard}
@@ -84,6 +85,14 @@ export default function WelcomeLandingPage() {
                 </button>
               </>
             )}
+            <a
+              href="/kabadiwala-connect-latest.apk"
+              download="kabadiwala-connect-latest.apk"
+              className="w-full sm:w-auto px-5 py-3.5 rounded-xl bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-400/40 text-emerald-300 font-bold text-sm backdrop-blur flex items-center justify-center gap-2 transition cursor-pointer shadow-md"
+            >
+              <Download size={16} />
+              <span>Download APK (4.7 MB)</span>
+            </a>
           </div>
         </div>
       </section>
