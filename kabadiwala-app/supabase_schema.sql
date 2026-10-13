@@ -70,6 +70,19 @@ CREATE TABLE IF NOT EXISTS public.lots (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Ensure all columns exist if the table was created earlier with partial columns
+ALTER TABLE public.lots ADD COLUMN IF NOT EXISTS collector_id TEXT;
+ALTER TABLE public.lots ADD COLUMN IF NOT EXISTS material TEXT;
+ALTER TABLE public.lots ADD COLUMN IF NOT EXISTS approx_weight NUMERIC;
+ALTER TABLE public.lots ADD COLUMN IF NOT EXISTS estimated_value NUMERIC;
+ALTER TABLE public.lots ADD COLUMN IF NOT EXISTS actual_weight NUMERIC;
+ALTER TABLE public.lots ADD COLUMN IF NOT EXISTS purchase_amount NUMERIC;
+ALTER TABLE public.lots ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'PENDING';
+ALTER TABLE public.lots ADD COLUMN IF NOT EXISTS hub_id TEXT;
+ALTER TABLE public.lots ADD COLUMN IF NOT EXISTS shipment_id TEXT;
+ALTER TABLE public.lots ADD COLUMN IF NOT EXISTS condition TEXT;
+ALTER TABLE public.lots ADD COLUMN IF NOT EXISTS photo_url TEXT;
+
 -- 7. Hub Purchases (Intake, Scale Weighbridge Verification & Pricing)
 CREATE TABLE IF NOT EXISTS public.hub_purchases (
     id TEXT PRIMARY KEY,
