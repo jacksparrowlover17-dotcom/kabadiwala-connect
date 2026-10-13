@@ -9,6 +9,10 @@ import {
   ensureDemoData
 } from './db';
 import { sha256 } from 'js-sha256';
+import { 
+  verifyHubOperationalStatus, 
+  verifyRecyclerOperationalStatus 
+} from './authService';
 
 /**
  * Computes canonical 64-character SHA-256 digest for an aggregated shipment manifest.
@@ -154,6 +158,11 @@ export async function receiveLotAtHub(
   }
   if (lot.shipmentId) {
     throw new Error(`Lot ${lot.id.slice(0, 6)} is already allocated to active shipment ${lot.shipmentId}.`);
+  }
+
+  const hubAuth = await verifyHubOperationalStatus(hubId);
+  if (!hubAuth.allowed) {
+    throw new Error(hubAuth.reason || 'Hub is not approved for intake operations. Business verification required.');
   }
 
   const hub = await db.hubs.get(hubId) || DEMO_HUBS[0];
@@ -326,6 +335,17 @@ export async function createOutgoingShipment(params: {
     const recycler = await db.recyclers.get(params.recyclerId);
     if (!recycler) throw new Error(`Intended Recycler not found: ${params.recyclerId}`);
 
+    // Verification check for Hub and Recycler
+    const hubAuth = await verifyHubOperationalStatus(params.hubId);
+    if (!hubAuth.allowed) {
+      throw new Error(hubAuth.reason || 'Hub is not approved to create shipments.');
+    }
+
+    const recAuth = await verifyRecyclerOperationalStatus(params.recyclerId, params.material);
+    if (!recAuth.allowed) {
+      throw new Error(recAuth.reason || 'Selected recycler is not approved for this shipment.');
+    }
+
     // Fetch all selected lots
     const lots = await db.lots.where('id').anyOf(params.lotIds).toArray();
     if (lots.length !== params.lotIds.length) {
@@ -456,6 +476,12 @@ export async function receiveShipmentAtRecycler(
   // Idempotency: Prevent duplicate receipt confirmation
   if (shipment.status === 'RECEIVED_BY_RECYCLER' || shipment.status === 'COMPLETED') {
     throw new Error(`Shipment ${shipmentId} has already been received at the recycler gate. Duplicate intake blocked.`);
+  }
+
+  // Verification check: Recycler must be approved and authorized for this material category
+  const recAuth = await verifyRecyclerOperationalStatus(shipment.recyclerId, shipment.material);
+  if (!recAuth.allowed) {
+    throw new Error(recAuth.reason || 'Recycler is not authorized to accept this shipment.');
   }
 
   // Integrity Check: Compare against 6-digit manifest code or full SHA-256 hash

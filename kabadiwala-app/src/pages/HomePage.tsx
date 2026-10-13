@@ -10,7 +10,7 @@ import PurchaseReceiptModal from '../components/PurchaseReceiptModal';
 import {
   Wallet, Package, Volume2, Leaf, User,
   Edit3, X, Check, MapPin, Building2, CheckCircle2, Clock,
-  Receipt, Scale, PlusCircle, ChevronRight, AlertTriangle
+  Receipt, Scale, PlusCircle, ChevronRight, AlertTriangle, Compass
 } from 'lucide-react';
 
 const LANGUAGES = [
@@ -251,15 +251,21 @@ export default function HomePage() {
 
                       {/* Actions for PENDING */}
                       {lot.status === 'PENDING' && (
-                        <div className="mt-3 grid grid-cols-2 gap-2">
-                          <button onClick={() => { setHubSelectLot(lot); setChosenHubId(DEMO_HUBS[0].id); }}
-                            className="py-2 bg-[#f0fdf4] border border-[#dcfce7] text-[#166534] text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 hover:bg-[#dcfce7] transition">
-                            <Building2 size={13}/>Send to Hub
+                        <div className="mt-3 space-y-2">
+                          <button onClick={() => navigate(`/find-partners?lotId=${lot.id}&material=${encodeURIComponent(lot.material)}&weight=${lot.weight}`)}
+                            className="w-full py-2.5 bg-[#166534] text-white text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 hover:bg-[#14532d] shadow-sm transition">
+                            <Compass size={14}/>Find Collection Partners & Smart Quotes
                           </button>
-                          <button onClick={() => navigate(`/handover/${lot.id}`)}
-                            className="py-2 bg-[#166534] text-white text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 hover:bg-[#14532d] transition">
-                            Direct Handover<ChevronRight size={13}/>
-                          </button>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button onClick={() => { setHubSelectLot(lot); setChosenHubId(DEMO_HUBS[0].id); }}
+                              className="py-2 bg-[#f0fdf4] border border-[#dcfce7] text-[#166534] text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 hover:bg-[#dcfce7] transition">
+                              <Building2 size={13}/>Quick Hub Send
+                            </button>
+                            <button onClick={() => navigate(`/handover/${lot.id}`)}
+                              className="py-2 bg-slate-100 text-slate-700 text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 hover:bg-slate-200 transition">
+                              Direct Manifest<ChevronRight size={13}/>
+                            </button>
+                          </div>
                         </div>
                       )}
 

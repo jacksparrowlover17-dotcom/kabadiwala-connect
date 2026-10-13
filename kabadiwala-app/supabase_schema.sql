@@ -165,3 +165,105 @@ CREATE POLICY "Anon Write Payments" ON public.payments FOR ALL USING (true) WITH
 CREATE POLICY "Anon Write Shipments" ON public.shipments FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Anon Write Transactions" ON public.transactions FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Anon Write Hubs" ON public.hubs FOR ALL USING (true) WITH CHECK (true);
+
+-- ============================================================================
+-- 11. USERS & ROLE-BASED ACCESS CONTROL (RBAC)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS public.users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email TEXT UNIQUE NOT NULL,
+    phone TEXT,
+    full_name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('COLLECTOR', 'HUB', 'RECYCLER', 'ADMIN')),
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 12. BUSINESS PROFILES (Hub Operators and Formal Recyclers)
+CREATE TABLE IF NOT EXISTS public.business_profiles (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('HUB', 'RECYCLER')),
+    business_name TEXT NOT NULL,
+    authorized_contact TEXT NOT NULL,
+    facility_address TEXT NOT NULL,
+    district TEXT NOT NULL,
+    operating_area TEXT,
+    accepted_materials TEXT[] DEFAULT '{}',
+    cpcb_registration_number TEXT,
+    facility_scope TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 13. VERIFICATION APPLICATIONS & STATUS LIFECYCLE
+-- Lifecycle states: pending_verification, under_review, changes_requested, approved, rejected, suspended, expired
+CREATE TABLE IF NOT EXISTS public.verification_applications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_profile_id UUID REFERENCES public.business_profiles(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('HUB', 'RECYCLER')),
+    status TEXT NOT NULL DEFAULT 'pending_verification' CHECK (status IN ('pending_verification', 'under_review', 'changes_requested', 'approved', 'rejected', 'suspended', 'expired')),
+    submitted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    reviewed_at TIMESTAMP WITH TIME ZONE,
+    reviewer_id UUID REFERENCES public.users(id),
+    review_decision TEXT,
+    review_notes TEXT,
+    rejection_reason TEXT,
+    correction_requests TEXT,
+    official_registry_ref TEXT,
+    registry_verified_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 14. VERIFICATION DOCUMENTS (Private Reference Metadata)
+CREATE TABLE IF NOT EXISTS public.verification_documents (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    application_id UUID REFERENCES public.verification_applications(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    document_type TEXT NOT NULL, -- 'FACILITY_EVIDENCE', 'TRADE_LICENSE', 'CPCB_REGISTRATION', 'SPCB_CONSENT', 'ID_PROOF'
+    document_name TEXT NOT NULL,
+    file_path TEXT NOT NULL,     -- Secured storage path / encrypted base64 payload reference
+    issue_date DATE,
+    expiry_date DATE,
+    is_valid BOOLEAN DEFAULT true,
+    uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 15. AUDIT LOGS (Immutable decision events for compliance)
+CREATE TABLE IF NOT EXISTS public.verification_audit_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    entity_type TEXT NOT NULL, -- 'APPLICATION', 'USER', 'BUSINESS_PROFILE'
+    entity_id TEXT NOT NULL,
+    action TEXT NOT NULL,      -- 'SUBMITTED', 'UNDER_REVIEW', 'CHANGES_REQUESTED', 'APPROVED', 'REJECTED', 'SUSPENDED', 'RESUBMITTED'
+    performed_by TEXT NOT NULL,
+    details JSONB DEFAULT '{}',
+    reason TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Indexes for performance & quick administrative queries
+CREATE INDEX IF NOT EXISTS idx_users_role ON public.users(role);
+CREATE INDEX IF NOT EXISTS idx_verif_app_status ON public.verification_applications(status);
+CREATE INDEX IF NOT EXISTS idx_verif_app_user ON public.verification_applications(user_id);
+CREATE INDEX IF NOT EXISTS idx_business_profile_user ON public.business_profiles(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_entity ON public.verification_audit_events(entity_id);
+
+-- Enable RLS
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.business_profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.verification_applications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.verification_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.verification_audit_events ENABLE ROW LEVEL SECURITY;
+
+-- Allow authenticated and demo sync policies
+CREATE POLICY "Public Read Approved Profiles" ON public.business_profiles FOR SELECT USING (true);
+CREATE POLICY "Public Read Applications" ON public.verification_applications FOR SELECT USING (true);
+CREATE POLICY "Public Write Applications" ON public.verification_applications FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Public Write Profiles" ON public.business_profiles FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Public Write Documents" ON public.verification_documents FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Public Write Audit" ON public.verification_audit_events FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Public Write Users" ON public.users FOR ALL USING (true) WITH CHECK (true);

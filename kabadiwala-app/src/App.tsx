@@ -2,7 +2,8 @@ import React, { useEffect, useState, createContext, useContext } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import {
   Home, PlusSquare, ShieldCheck, Database, UserCircle,
-  Building2, Truck, Scale, TrendingUp, Menu, X, Recycle, ChevronDown
+  Building2, Truck, Scale, TrendingUp, Menu, X, Recycle, ChevronDown,
+  LogIn, LogOut, Compass
 } from 'lucide-react';
 import HomePage from './pages/HomePage';
 import NewLotPage from './pages/NewLotPage';
@@ -13,8 +14,14 @@ import PriceBoardPage from './pages/PriceBoardPage';
 import DataExportPage from './pages/DataExportPage';
 import HubDashboardPage from './pages/HubDashboardPage';
 import ShipmentAggregationPage from './pages/ShipmentAggregationPage';
+import AuthPage from './pages/AuthPage';
+import VerificationStatusPage from './pages/VerificationStatusPage';
+import AdminVerificationPage from './pages/AdminVerificationPage';
+import DestinationFinderPage from './pages/DestinationFinderPage';
+import MyHandoversPage from './pages/MyHandoversPage';
 import { db } from './lib/db';
 import { syncDataOnline } from './lib/supabase';
+import { getCurrentSession, logout } from './lib/authService';
 
 export type Role = 'COLLECTOR' | 'HUB' | 'RECYCLER' | 'ADMIN';
 
@@ -32,25 +39,30 @@ const ROLE_META: Record<Role, { label: string; color: string; bg: string }> = {
 // ─── Nav links per role ───────────────────────────────────────
 const NAV_LINKS: Record<Role, { path: string; label: string; icon: React.ReactNode }[]> = {
   COLLECTOR: [
-    { path: '/',       label: 'My Loads',  icon: <Home size={18}/> },
-    { path: '/prices', label: 'Prices',    icon: <TrendingUp size={18}/> },
-    { path: '/new',    label: 'New Load',  icon: <PlusSquare size={18}/> },
-    { path: '/safety', label: 'Safety',    icon: <ShieldCheck size={18}/> },
+    { path: '/',              label: 'My Loads',        icon: <Home size={18}/> },
+    { path: '/find-partners', label: 'Find Facilities', icon: <Compass size={18}/> },
+    { path: '/handovers',     label: 'Handovers',       icon: <Truck size={18}/> },
+    { path: '/prices',        label: 'Prices',          icon: <TrendingUp size={18}/> },
+    { path: '/new',           label: 'New Load',        icon: <PlusSquare size={18}/> },
+    { path: '/safety',        label: 'Safety',          icon: <ShieldCheck size={18}/> },
   ],
   HUB: [
-    { path: '/hub',           label: 'Hub Intake',    icon: <Building2 size={18}/> },
-    { path: '/hub/shipments', label: 'Bulk Shipments',icon: <Truck size={18}/> },
-    { path: '/prices',        label: 'Rate Card',     icon: <TrendingUp size={18}/> },
+    { path: '/hub',                  label: 'Hub Intake',       icon: <Building2 size={18}/> },
+    { path: '/hub/shipments',        label: 'Bulk Shipments',   icon: <Truck size={18}/> },
+    { path: '/verification-status',  label: 'Business Status',  icon: <ShieldCheck size={18}/> },
+    { path: '/prices',               label: 'Rate Card',        icon: <TrendingUp size={18}/> },
   ],
   RECYCLER: [
-    { path: '/recycler', label: 'Gate Intake',  icon: <Scale size={18}/> },
-    { path: '/prices',   label: 'Market Rates', icon: <TrendingUp size={18}/> },
-    { path: '/data',     label: 'Audit Ledger', icon: <Database size={18}/> },
+    { path: '/recycler',             label: 'Gate Intake',      icon: <Scale size={18}/> },
+    { path: '/verification-status',  label: 'Business Status',  icon: <ShieldCheck size={18}/> },
+    { path: '/prices',               label: 'Market Rates',     icon: <TrendingUp size={18}/> },
+    { path: '/data',                 label: 'Audit Ledger',     icon: <Database size={18}/> },
   ],
   ADMIN: [
-    { path: '/data',   label: 'EPR Insights', icon: <Database size={18}/> },
-    { path: '/hub',    label: 'Hubs',         icon: <Building2 size={18}/> },
-    { path: '/prices', label: 'Price Board',  icon: <TrendingUp size={18}/> },
+    { path: '/admin/verifications',  label: 'Verification Queue', icon: <ShieldCheck size={18}/> },
+    { path: '/data',                 label: 'EPR Insights',      icon: <Database size={18}/> },
+    { path: '/hub',                  label: 'Hubs',              icon: <Building2 size={18}/> },
+    { path: '/prices',               label: 'Price Board',       icon: <TrendingUp size={18}/> },
   ],
 };
 
@@ -148,9 +160,16 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
 function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
   const { role } = useContext(RoleContext);
   const location = useLocation();
+  const navigate = useNavigate();
   const links = NAV_LINKS[role];
   const meta = ROLE_META[role];
   const current = links.find(l => l.path === location.pathname) || links[0];
+  const session = getCurrentSession();
+
+  const handleSignOut = () => {
+    logout();
+    navigate('/login');
+  };
 
   return (
     <header className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-[#e2e8f0] px-4 py-3 flex items-center gap-3 no-print">
@@ -177,11 +196,45 @@ function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
       </div>
 
       <div className="ml-auto flex items-center gap-2 flex-shrink-0">
-        {/* Role badge */}
-        <span className="badge text-[11px]" style={{ background: meta.bg, color: meta.color }}>
-          <UserCircle size={12}/>
-          {meta.label}
-        </span>
+        {session ? (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate('/verification-status')}
+              className="badge text-[11px] hover:opacity-80 transition cursor-pointer"
+              style={{ background: meta.bg, color: meta.color }}
+              title="View verification status"
+            >
+              <UserCircle size={12}/>
+              <span>{session.user.fullName || meta.label}</span>
+              {session.verificationStatus && session.verificationStatus !== 'active' && (
+                <span className="ml-1 px-1 py-0.2 rounded bg-white/70 text-[9px] uppercase font-bold">
+                  {session.verificationStatus.replace('_', ' ')}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={handleSignOut}
+              className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition"
+              title="Sign Out"
+            >
+              <LogOut size={14} />
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <span className="badge text-[11px]" style={{ background: meta.bg, color: meta.color }}>
+              <UserCircle size={12}/>
+              {meta.label}
+            </span>
+            <button
+              onClick={() => navigate('/login')}
+              className="px-2.5 py-1 text-xs font-semibold bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg flex items-center gap-1 transition"
+            >
+              <LogIn size={13} />
+              <span className="hidden sm:inline">Sign In / Register</span>
+            </button>
+          </div>
+        )}
       </div>
     </header>
   );
@@ -235,7 +288,10 @@ function Layout({ children }: { children: React.ReactNode }) {
 
 // ─── Root App ─────────────────────────────────────────────────
 function App() {
-  const [role, setRole] = useState<Role>('COLLECTOR');
+  const [role, setRole] = useState<Role>(() => {
+    const sess = getCurrentSession();
+    return (sess?.user?.role as Role) || 'COLLECTOR';
+  });
 
   useEffect(() => {
     const handleOnline = async () => {
@@ -256,15 +312,20 @@ function App() {
       <BrowserRouter>
         <Layout>
           <Routes>
-            <Route path="/"               element={<HomePage/>}/>
-            <Route path="/new"            element={<NewLotPage/>}/>
-            <Route path="/handover/:id"   element={<HandoverPage/>}/>
-            <Route path="/hub"            element={<HubDashboardPage/>}/>
-            <Route path="/hub/shipments"  element={<ShipmentAggregationPage/>}/>
-            <Route path="/recycler"       element={<RecyclerPage/>}/>
-            <Route path="/safety"         element={<SafetyPage/>}/>
-            <Route path="/prices"         element={<PriceBoardPage/>}/>
-            <Route path="/data"           element={<DataExportPage/>}/>
+            <Route path="/"                    element={<HomePage/>}/>
+            <Route path="/new"                 element={<NewLotPage/>}/>
+            <Route path="/find-partners"       element={<DestinationFinderPage/>}/>
+            <Route path="/handovers"           element={<MyHandoversPage/>}/>
+            <Route path="/handover/:id"        element={<HandoverPage/>}/>
+            <Route path="/hub"                 element={<HubDashboardPage/>}/>
+            <Route path="/hub/shipments"       element={<ShipmentAggregationPage/>}/>
+            <Route path="/recycler"            element={<RecyclerPage/>}/>
+            <Route path="/safety"              element={<SafetyPage/>}/>
+            <Route path="/prices"              element={<PriceBoardPage/>}/>
+            <Route path="/data"                element={<DataExportPage/>}/>
+            <Route path="/login"               element={<AuthPage/>}/>
+            <Route path="/verification-status" element={<VerificationStatusPage/>}/>
+            <Route path="/admin/verifications" element={<AdminVerificationPage/>}/>
           </Routes>
         </Layout>
       </BrowserRouter>
