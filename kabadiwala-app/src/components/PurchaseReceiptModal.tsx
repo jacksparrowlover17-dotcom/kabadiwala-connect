@@ -93,11 +93,11 @@ export const PurchaseReceiptModal: React.FC<PurchaseReceiptModalProps> = ({
 
           <div className="flex items-center space-x-2 text-[#FFC72C] text-xs font-bold uppercase tracking-wider mb-1">
             <CheckCircle2 size={16} />
-            <span>Official Scrap Purchase Voucher</span>
+            <span>Scrap Purchase Voucher (Expo Prototype)</span>
           </div>
 
           <h2 className="text-xl font-black tracking-tight">KABADIWALA CONNECT</h2>
-          <p className="text-xs text-gray-300">Hub Aggregation & Direct Payment Receipt</p>
+          <p className="text-xs text-gray-300">Hub Aggregation & Simulated Payment Receipt</p>
           
           <div className="mt-3 pt-3 border-t border-white/10 flex justify-between text-[11px] font-mono text-gray-300">
             <span>Voucher: {receiptId}</span>
@@ -207,10 +207,10 @@ export const PurchaseReceiptModal: React.FC<PurchaseReceiptModalProps> = ({
           <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-center space-y-1">
             <div className="flex items-center justify-center space-x-1 text-blue-700 font-bold text-xs">
               <ShieldCheck size={14} />
-              <span>CPCB Form 6 Aggregation Traceability</span>
+              <span>Traceability Workflow Record</span>
             </div>
             <p className="text-[10px] text-gray-500">
-              Lot Purchase Ref: {purchaseId} • Tamper-evident record stored in local ledger.
+              Lot Purchase Ref: {purchaseId} • Prototype Record: For college demonstration & pilot tracking, not an official statutory CPCB certificate.
             </p>
           </div>
 

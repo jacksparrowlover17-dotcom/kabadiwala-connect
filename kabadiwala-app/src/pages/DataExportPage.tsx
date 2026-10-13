@@ -40,6 +40,15 @@ const DATASETS = [
   },
 ];
 
+export function escapeCSV(val: any): string {
+  if (val === null || val === undefined) return '';
+  const str = String(val);
+  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
 function downloadCSV(filename: string, csv: string) {
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const link = document.createElement('a');
@@ -61,9 +70,23 @@ export default function DataExportPage() {
   const exportHandlers: Record<string, () => Promise<void>> = {
     transactions: async () => {
       const lots = await db.lots.toArray();
-      let csv = 'lot_id,collector_id,material,approx_weight_kg,actual_weight_kg,purchase_amount_inr,status,hub_id,shipment_id,timestamp\n';
+      let csv = 'lot_id,collector_id,material,approx_weight_kg,actual_weight_kg,purchase_amount_inr,status,hub_id,shipment_id,is_sample_data,timestamp\n';
       lots.forEach(lot => {
-        csv += `${lot.id},${lot.collectorId||'KAB-7842'},${lot.material},${lot.weight},${lot.actualWeight||''},${lot.purchaseAmount||lot.estimate},${lot.status},${lot.hubId||''},${lot.shipmentId||''},${new Date(lot.timestamp).toISOString()}\n`;
+        const isSample = lot.id.startsWith('syn-') ? 'true' : 'false';
+        const row = [
+          escapeCSV(lot.id),
+          escapeCSV(lot.collectorId || 'KAB-7842'),
+          escapeCSV(lot.material),
+          escapeCSV(lot.weight),
+          escapeCSV(lot.actualWeight ?? ''),
+          escapeCSV(lot.purchaseAmount ?? lot.estimate),
+          escapeCSV(lot.status),
+          escapeCSV(lot.hubId ?? ''),
+          escapeCSV(lot.shipmentId ?? ''),
+          isSample,
+          escapeCSV(new Date(lot.timestamp).toISOString()),
+        ].join(',');
+        csv += `${row}\n`;
       });
       downloadCSV('Lots_Transactions_Dataset.csv', csv);
     },
@@ -71,23 +94,67 @@ export default function DataExportPage() {
       const purchases = await db.hubPurchases.toArray();
       let csv = 'purchase_id,hub_id,lot_id,collector_id,material,estimated_weight_kg,actual_weight_kg,agreed_rate_inr,deductions_inr,net_amount_inr,status,weighed_at,confirmed_at\n';
       purchases.forEach(p => {
-        csv += `${p.id},${p.hubId},${p.lotId},${p.collectorId},${p.material},${p.estimatedWeight},${p.actualWeight||''},${p.agreedRate||''},${p.deductions},${p.netAmount||''},${p.status},${new Date(p.updatedAt).toISOString()},${p.collectorConfirmedAt?new Date(p.collectorConfirmedAt).toISOString():''}\n`;
+        const row = [
+          escapeCSV(p.id),
+          escapeCSV(p.hubId),
+          escapeCSV(p.lotId),
+          escapeCSV(p.collectorId),
+          escapeCSV(p.material),
+          escapeCSV(p.estimatedWeight),
+          escapeCSV(p.actualWeight ?? ''),
+          escapeCSV(p.agreedRate ?? ''),
+          escapeCSV(p.deductions),
+          escapeCSV(p.netAmount ?? ''),
+          escapeCSV(p.status),
+          escapeCSV(new Date(p.updatedAt).toISOString()),
+          escapeCSV(p.collectorConfirmedAt ? new Date(p.collectorConfirmedAt).toISOString() : ''),
+        ].join(',');
+        csv += `${row}\n`;
       });
       downloadCSV('Hub_Purchases_Dataset.csv', csv);
     },
     payments: async () => {
       const payments = await db.payments.toArray();
-      let csv = 'payment_id,hub_id,purchase_id,lot_id,collector_id,amount_inr,payment_mode,reference_note,recorded_at\n';
+      let csv = 'payment_id,hub_id,purchase_id,lot_id,collector_id,amount_inr,payment_mode,reference_note,is_simulated,recorded_at\n';
       payments.forEach(p => {
-        csv += `${p.id},${p.hubId},${p.purchaseId},${p.lotId},${p.collectorId},${p.amount},${p.method},${p.referenceNote||''},${new Date(p.recordedAt).toISOString()}\n`;
+        const row = [
+          escapeCSV(p.id),
+          escapeCSV(p.hubId),
+          escapeCSV(p.purchaseId),
+          escapeCSV(p.lotId),
+          escapeCSV(p.collectorId),
+          escapeCSV(p.amount),
+          escapeCSV(p.method),
+          escapeCSV(p.referenceNote ?? ''),
+          escapeCSV(p.isSimulated ? 'true' : 'false'),
+          escapeCSV(new Date(p.recordedAt).toISOString()),
+        ].join(',');
+        csv += `${row}\n`;
       });
       downloadCSV('Payments_Disbursement_Dataset.csv', csv);
     },
     shipments: async () => {
       const shipments = await db.shipments.toArray();
-      let csv = 'shipment_id,hub_id,recycler_id,recycler_name,material,lot_count,planned_kg,dispatched_kg,received_kg,discrepancy_kg,handover_hash,status,created_at\n';
+      let csv = 'shipment_id,hub_id,recycler_id,recycler_name,material,lot_count,planned_kg,dispatched_kg,received_kg,discrepancy_kg,tolerance_exceeded,handover_hash,full_sha256_hash,status,created_at\n';
       shipments.forEach(s => {
-        csv += `${s.id},${s.hubId},${s.recyclerId},"${s.recyclerName}",${s.material},${s.lotIds.length},${s.plannedQuantity},${s.dispatchedQuantity||''},${s.recyclerReceivedQuantity||''},${s.discrepancyQuantity||''},${s.handoverHash||''},${s.status},${new Date(s.createdAt).toISOString()}\n`;
+        const row = [
+          escapeCSV(s.id),
+          escapeCSV(s.hubId),
+          escapeCSV(s.recyclerId),
+          escapeCSV(s.recyclerName),
+          escapeCSV(s.material),
+          escapeCSV(s.lotIds.length),
+          escapeCSV(s.plannedQuantity),
+          escapeCSV(s.dispatchedQuantity ?? ''),
+          escapeCSV(s.recyclerReceivedQuantity ?? ''),
+          escapeCSV(s.discrepancyQuantity ?? ''),
+          escapeCSV(s.toleranceExceeded ? 'true' : 'false'),
+          escapeCSV(s.handoverHash ?? ''),
+          escapeCSV(s.fullSha256Hash ?? ''),
+          escapeCSV(s.status),
+          escapeCSV(new Date(s.createdAt).toISOString()),
+        ].join(',');
+        csv += `${row}\n`;
       });
       downloadCSV('Shipments_Form6_Dataset.csv', csv);
     },
@@ -95,7 +162,14 @@ export default function DataExportPage() {
       const recyclers = await db.recyclers.toArray();
       let csv = 'recycler_id,name,offered_rate_per_kg,distance_km,is_verified\n';
       recyclers.forEach(r => {
-        csv += `${r.id},${r.name},${r.rate},${r.distance},${r.verified}\n`;
+        const row = [
+          escapeCSV(r.id),
+          escapeCSV(r.name),
+          escapeCSV(r.rate),
+          escapeCSV(r.distance),
+          escapeCSV(r.verified ? 'true' : 'false'),
+        ].join(',');
+        csv += `${row}\n`;
       });
       downloadCSV('Recyclers_Registry_Dataset.csv', csv);
     },

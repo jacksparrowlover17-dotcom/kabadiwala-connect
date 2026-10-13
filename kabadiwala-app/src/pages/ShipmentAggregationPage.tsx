@@ -508,10 +508,13 @@ export default function ShipmentAggregationPage() {
             <div className="border-b-2 border-dashed border-[#cbd5e1] pb-3 text-center">
               <div className="inline-flex items-center gap-1.5 bg-[#dcfce7] text-[#166534] text-[10px] font-black uppercase px-2.5 py-1 rounded-full mb-1">
                 <ShieldCheck size={12} />
-                Official Form 6 E-Waste Bulk Transport Manifest
+                Form 6 E-Waste Bulk Transport Manifest (Expo Prototype)
               </div>
               <h2 className="text-xl font-black text-[#1f2937]">AGGREGATED CARGO MANIFEST</h2>
               <p className="text-xs font-mono text-[#64748b]">Manifest ID: {printingShipment.id}</p>
+              <p className="text-[10px] text-amber-700 bg-amber-50 rounded-lg p-1 mt-1">
+                Prototype Record: Generated for student exhibition & supply chain audit demo. Not an official CPCB statutory filing.
+              </p>
             </div>
 
             {/* SHA Hash Code Card */}

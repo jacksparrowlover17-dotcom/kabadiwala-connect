@@ -24,6 +24,7 @@ export default function RecyclerPage() {
   const [notesInput, setNotesInput] = useState<string>('');
   const [hubError, setHubError] = useState<string | null>(null);
   const [hubSuccess, setHubSuccess] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   // Direct Handover state
   const [code, setCode] = useState('');
@@ -46,7 +47,7 @@ export default function RecyclerPage() {
 
   const handleVerifyShipment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedShipmentId) return;
+    if (!selectedShipmentId || isSubmitting) return;
     setHubError(null);
     setHubSuccess(null);
 
@@ -56,6 +57,7 @@ export default function RecyclerPage() {
       return;
     }
 
+    setIsSubmitting(true);
     try {
       const updated = await receiveShipmentAtRecycler({
         shipmentId: selectedShipmentId,
@@ -64,10 +66,13 @@ export default function RecyclerPage() {
         note: notesInput.trim() || undefined
       });
 
-      setHubSuccess(`Shipment ${updated.id} verified at gate. Weight discrepancy recorded: ${updated.discrepancyQuantity} kg.`);
+      const tolMsg = updated.toleranceExceeded ? ' (⚠️ Exceeds 1% transit tolerance)' : ' (Within tolerance)';
+      setHubSuccess(`Shipment ${updated.id} verified at gate. Weight discrepancy: ${updated.discrepancyQuantity} kg${tolMsg}.`);
       setSelectedShipmentId(null);
     } catch (err: any) {
       setHubError(err.message || 'Verification failed. Please check manifest code.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -415,9 +420,18 @@ export default function RecyclerPage() {
                   <div className="p-2.5 bg-[#fef3c7] border border-[#fde68a] rounded-xl font-mono flex justify-between items-center text-xs">
                     <span className="text-[#92400e] font-semibold">Scale Variance:</span>
                     <span className={`font-black ${diff === 0 ? 'text-[#166534]' : 'text-amber-800'}`}>
-                      {diff > 0 ? '+' : ''}{diff} kg
+                      {diff > 0 ? '+' : ''}{diff} kg ({expected > 0 ? ((Math.abs(diff)/expected)*100).toFixed(2) : 0}%)
                     </span>
                   </div>
+
+                  {Math.abs(diff) > ((expected * 0.01) + 0.005) && (
+                    <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 flex items-start gap-1.5">
+                      <AlertTriangle size={14} className="text-amber-600 flex-shrink-0 mt-0.5" />
+                      <span>
+                        Notice: Variance exceeds standard 1.0% transit tolerance (±{((expected * 0.01)).toFixed(2)} kg). This will be flagged in the audit ledger.
+                      </span>
+                    </div>
+                  )}
 
                   <div>
                     <label className="block font-bold text-[#1f2937] mb-1">
@@ -453,6 +467,7 @@ export default function RecyclerPage() {
                   <div className="flex gap-2 pt-2">
                     <button
                       type="button"
+                      disabled={isSubmitting}
                       onClick={() => setSelectedShipmentId(null)}
                       className="btn-secondary w-1/2 py-2.5 text-xs"
                     >
@@ -460,9 +475,12 @@ export default function RecyclerPage() {
                     </button>
                     <button
                       type="submit"
+                      disabled={isSubmitting}
                       className="btn-primary w-1/2 py-2.5 text-xs"
                     >
-                      <CheckCircle2 size={14} /> Confirm Intake
+                      {isSubmitting ? 'Verifying…' : (
+                        <><CheckCircle2 size={14} /> Confirm Intake</>
+                      )}
                     </button>
                   </div>
                 </form>

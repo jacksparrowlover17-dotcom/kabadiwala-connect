@@ -9,6 +9,18 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder-anon-
 export const supabase = createClient(supabaseUrl, supabaseKey);
 
 /**
+ * Checks whether legitimate cloud credentials are provided vs placeholder fallbacks.
+ */
+export function isCloudConfigured(): boolean {
+  return Boolean(
+    supabaseUrl && 
+    !supabaseUrl.includes('placeholder') &&
+    supabaseKey &&
+    !supabaseKey.includes('placeholder')
+  );
+}
+
+/**
  * Syncs completed transactions, hub purchases, payments, and shipments
  * from local IndexedDB (Dexie) to Supabase cloud.
  * Offline-first design: silently handles offline state and network exceptions.

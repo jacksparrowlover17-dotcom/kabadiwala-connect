@@ -67,7 +67,7 @@ export default function HandoverPage() {
   const netEstimatedPay = Math.round(parseFloat(lot.weight) * effectiveRate);
   const co2Saved = (parseFloat(lot.weight) * 2.8).toFixed(1);
   const carbonPoints = Math.floor(parseFloat(lot.weight) * 10);
-  const manifestId = `CPCB-MNF-${(lot.id || '0000').slice(0, 8).toUpperCase()}`;
+  const manifestId = `KAB-PROTO-MNF-${(lot.id || '0000').slice(0, 8).toUpperCase()}`;
   
   const collectorId = lot.collectorId || profile?.collectorId || DEFAULT_PROFILE.collectorId;
   const collectorName = profile?.name || DEFAULT_PROFILE.name;
@@ -230,7 +230,7 @@ export default function HandoverPage() {
             <div className="border-b-2 border-dashed border-[#cbd5e1] pb-4 mb-4 text-center">
               <div className="inline-flex items-center gap-1.5 bg-[#dcfce7] text-[#166534] text-[10px] font-black uppercase px-3 py-1 rounded-full mb-1.5">
                 <ShieldCheck size={12} />
-                CPCB Form 6 · Official E-Waste Transfer Manifest
+                Transfer Manifest (Expo Prototype)
               </div>
               <h2 className="text-xl sm:text-2xl font-black tracking-wider text-[#1f2937]">HANDOVER PARCHI</h2>
               <p className="text-xs font-mono text-[#64748b] mt-0.5">Manifest ID: {manifestId}</p>

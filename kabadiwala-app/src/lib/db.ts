@@ -130,7 +130,10 @@ export interface Shipment {
   recyclerReceivedQuantity?: number; // kg
   discrepancyQuantity?: number; // kg (recyclerReceived - dispatched)
   discrepancyNote?: string;
-  handoverHash?: string;
+  toleranceExceeded?: boolean;
+  handoverHash?: string; // 6-digit manifest code
+  fullSha256Hash?: string; // Full 64-char SHA-256 digest
+  recordedBy?: string;
   status: ShipmentStatus;
   dispatchTimestamp?: number;
   receivedTimestamp?: number;

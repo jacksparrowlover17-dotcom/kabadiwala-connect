@@ -50,6 +50,7 @@ export default function NewLotPage() {
   const [weight, setWeight] = useState('');
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
+  const [weightError, setWeightError] = useState<string | null>(null);
   const [isProcessingPhoto, setIsProcessingPhoto] = useState(false);
   const [collectorId, setCollectorId] = useState('KAB-7842');
   const [isSaving, setIsSaving] = useState(false);
@@ -66,7 +67,7 @@ export default function NewLotPage() {
     try {
       setPhotoDataUrl(await compressImage(file));
     } catch (err: any) {
-      setPhotoError(err.message || 'Error processing photo.');
+      setPhotoError(err.message || 'Error processing photo or camera access denied.');
     } finally {
       setIsProcessingPhoto(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -74,25 +75,43 @@ export default function NewLotPage() {
   };
 
   const handleSave = async () => {
-    if (!weight || isSaving) return;
+    setWeightError(null);
+    const parsedWeight = parseFloat(weight);
+    if (isNaN(parsedWeight) || parsedWeight <= 0) {
+      setWeightError('Please enter a valid weight greater than 0 kg.');
+      return;
+    }
+    if (parsedWeight > 5000) {
+      setWeightError('Weight cannot exceed 5,000 kg per single collector load.');
+      return;
+    }
+
+    if (isSaving) return;
     setIsSaving(true);
-    const est = Math.round(parseFloat(weight) * material.rate);
-    const profile = await getCollectorProfile();
-    await db.lots.add({
-      id: crypto.randomUUID(),
-      material: material.name,
-      weight,
-      estimate: est,
-      condition,
-      photo: photoDataUrl || undefined,
-      collectorId: profile.collectorId || collectorId,
-      status: 'PENDING',
-      timestamp: Date.now(),
-    });
-    navigate('/');
+    try {
+      const est = Math.round(parsedWeight * material.rate);
+      const profile = await getCollectorProfile();
+      await db.lots.add({
+        id: crypto.randomUUID(),
+        material: material.name,
+        weight: parsedWeight.toFixed(1),
+        estimate: est,
+        condition,
+        photo: photoDataUrl || undefined,
+        collectorId: profile.collectorId || collectorId,
+        status: 'PENDING',
+        timestamp: Date.now(),
+      });
+      navigate('/');
+    } catch (err: any) {
+      setWeightError(err.message || 'Failed to save lot locally.');
+      setIsSaving(false);
+    }
   };
 
-  const estimate = weight ? Math.round(parseFloat(weight) * material.rate) : 0;
+  const estimate = (weight && !isNaN(parseFloat(weight)) && parseFloat(weight) > 0) 
+    ? Math.round(parseFloat(weight) * material.rate) 
+    : 0;
 
   return (
     <div className="max-w-xl mx-auto px-4 py-5 pb-24">
@@ -215,11 +234,19 @@ export default function NewLotPage() {
             <Weight size={15} color="#166534"/>3. Approximate Weight (kg)
           </label>
           <input
-            type="number" value={weight} step="0.1" min="0.1"
-            onChange={e => setWeight(e.target.value)}
+            type="number" value={weight} step="0.1" min="0.1" max="5000"
+            onChange={e => {
+              setWeight(e.target.value);
+              if (weightError) setWeightError(null);
+            }}
             placeholder="e.g. 5.5"
             className="kc-input text-2xl font-mono py-3"
           />
+          {weightError && (
+            <div className="mt-2 p-2.5 bg-red-50 border border-red-200 rounded-xl flex items-center gap-2 text-xs text-red-700">
+              <AlertCircle size={14}/>{weightError}
+            </div>
+          )}
         </div>
 
         {/* Estimate Card */}

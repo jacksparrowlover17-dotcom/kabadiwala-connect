@@ -139,7 +139,9 @@ export default function HomePage() {
             <Leaf size={14} color="#166534"/><span className="stat-card-label" style={{marginTop:0}}>CO₂ Saved</span>
           </div>
           <p className="stat-card-value text-[#166534]">{carbonSavedKg}<span className="text-base font-normal"> kg</span></p>
-          <p className="text-[11px] text-[#64748b] mt-1">lifetime estimate</p>
+          <p className="text-[10px] text-[#64748b] mt-1" title="Estimated at 1.44 kg CO₂e offset per kg diverted from landfill (academic LCA benchmark)">
+            est. (~1.44 kg CO₂e/kg)
+          </p>
         </div>
       </div>
 

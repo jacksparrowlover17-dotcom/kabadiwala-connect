@@ -11,12 +11,20 @@ import {
 import { sha256 } from 'js-sha256';
 
 /**
- * Generate a 6-digit tamper-evident hash for aggregated shipments
+ * Computes canonical 64-character SHA-256 digest for an aggregated shipment manifest.
+ */
+export function generateFullShipmentSha256(shipmentId: string, material: string, weightKg: number): string {
+  const payload = `id=${shipmentId.trim()}|kg=${weightKg.toFixed(2)}|mat=${material.trim().toLowerCase()}`;
+  return sha256(payload);
+}
+
+/**
+ * Generate a 6-digit tamper-evident human verification code for aggregated shipments.
+ * Derived deterministically from the shipment's SHA-256 digest.
  */
 export function generateShipmentHash(shipmentId: string, material: string, weightKg: number): string {
-  const payload = `shipment=${shipmentId}|mat=${material}|kg=${weightKg.toFixed(2)}`;
-  const hash = sha256(payload);
-  const shortHash = parseInt(hash.substring(0, 12), 16);
+  const fullHash = generateFullShipmentSha256(shipmentId, material, weightKg);
+  const shortHash = parseInt(fullHash.substring(0, 12), 16);
   return (shortHash % 1000000).toString().padStart(6, '0');
 }
 
@@ -26,6 +34,20 @@ export function generateShipmentHash(shipmentId: string, material: string, weigh
  */
 export function areMaterialsCompatible(mat1: string, mat2: string): boolean {
   return mat1.trim().toLowerCase() === mat2.trim().toLowerCase();
+}
+
+/**
+ * Checks if a weight discrepancy is within allowable transit tolerance (default 1.0%).
+ */
+export function isDiscrepancyWithinTolerance(
+  discrepancyKg: number,
+  dispatchedKg: number,
+  tolerancePercent: number = 1.0
+): { isWithinTolerance: boolean; allowedKg: number; actualPercent: number } {
+  const allowedKg = parseFloat(((dispatchedKg * tolerancePercent) / 100).toFixed(2));
+  const actualPercent = dispatchedKg > 0 ? parseFloat(((Math.abs(discrepancyKg) / dispatchedKg) * 100).toFixed(2)) : 0;
+  const isWithinTolerance = Math.abs(discrepancyKg) <= allowedKg + 0.005;
+  return { isWithinTolerance, allowedKg, actualPercent };
 }
 
 /**
@@ -127,6 +149,12 @@ export async function receiveLotAtHub(
   if (lot.status === 'REJECTED' || lot.status === 'CANCELLED') {
     throw new Error(`Cannot receive material for a ${lot.status} lot.`);
   }
+  if (lot.status === 'PAID' || lot.status === 'COMPLETED') {
+    throw new Error(`Lot ${lot.id.slice(0, 6)} has already been settled and completed.`);
+  }
+  if (lot.shipmentId) {
+    throw new Error(`Lot ${lot.id.slice(0, 6)} is already allocated to active shipment ${lot.shipmentId}.`);
+  }
 
   const hub = await db.hubs.get(hubId) || DEMO_HUBS[0];
   const purchaseId = `PUR-${lot.id.slice(0, 8).toUpperCase()}`;
@@ -153,7 +181,7 @@ export async function receiveLotAtHub(
 
   await db.hubPurchases.put(purchaseRecord);
 
-  // Update lot while preserving original lot.weight!
+  // Update lot while strictly preserving original lot.weight!
   await db.lots.update(lotId, {
     hubId: hub.id,
     actualWeight,
@@ -281,6 +309,7 @@ export async function recordHubPayment(params: {
 
 /**
  * Phase 5: Create an outgoing aggregated shipment to an authorized recycler.
+ * Executes atomically inside a Dexie transaction to prevent race conditions & double-allocation.
  */
 export async function createOutgoingShipment(params: {
   hubId: string;
@@ -292,77 +321,81 @@ export async function createOutgoingShipment(params: {
     throw new Error('A shipment requires at least one participating lot.');
   }
 
-  const hub = await db.hubs.get(params.hubId) || DEMO_HUBS[0];
-  const recycler = await db.recyclers.get(params.recyclerId);
-  if (!recycler) throw new Error(`Intended Recycler not found: ${params.recyclerId}`);
+  return await db.transaction('rw', [db.lots, db.shipments, db.hubs, db.recyclers], async () => {
+    const hub = await db.hubs.get(params.hubId) || DEMO_HUBS[0];
+    const recycler = await db.recyclers.get(params.recyclerId);
+    if (!recycler) throw new Error(`Intended Recycler not found: ${params.recyclerId}`);
 
-  // Fetch all selected lots
-  const lots = await db.lots.where('id').anyOf(params.lotIds).toArray();
-  if (lots.length !== params.lotIds.length) {
-    throw new Error('One or more selected lots could not be found.');
-  }
-
-  // 1. Material compatibility check
-  for (const lot of lots) {
-    if (!areMaterialsCompatible(lot.material, params.material)) {
-      throw new Error(
-        `Incompatible material detected: Lot ${lot.id.slice(0, 6)} is "${lot.material}" which cannot be aggregated into a "${params.material}" shipment.`
-      );
+    // Fetch all selected lots
+    const lots = await db.lots.where('id').anyOf(params.lotIds).toArray();
+    if (lots.length !== params.lotIds.length) {
+      throw new Error('One or more selected lots could not be found.');
     }
-  }
 
-  // 2. Double-allocation check
-  for (const lot of lots) {
-    if (lot.shipmentId) {
-      throw new Error(`Lot ${lot.id.slice(0, 6)} is already allocated to active shipment ${lot.shipmentId}.`);
+    // 1. Material compatibility check
+    for (const lot of lots) {
+      if (!areMaterialsCompatible(lot.material, params.material)) {
+        throw new Error(
+          `Incompatible material detected: Lot ${lot.id.slice(0, 6)} is "${lot.material}" which cannot be aggregated into a "${params.material}" shipment.`
+        );
+      }
     }
-  }
 
-  // 3. Status validity check: Lots must be in hub possession
-  const eligibleStatuses = ['RECEIVED', 'AWAITING_COLLECTOR_CONFIRMATION', 'PURCHASE_CONFIRMED', 'PAYMENT_PENDING', 'PAID'];
-  for (const lot of lots) {
-    if (!eligibleStatuses.includes(lot.status)) {
-      throw new Error(`Lot ${lot.id.slice(0, 6)} is in status "${lot.status}". Only received or settled lots can be shipped.`);
+    // 2. Double-allocation check
+    for (const lot of lots) {
+      if (lot.shipmentId) {
+        throw new Error(`Lot ${lot.id.slice(0, 6)} is already allocated to active shipment ${lot.shipmentId}. Duplicate allocation blocked.`);
+      }
     }
-  }
 
-  // Calculate planned quantity using actual weights (fallback to estimated if missing)
-  const plannedQuantity = lots.reduce((acc, lot) => {
-    const weight = typeof lot.actualWeight === 'number' && lot.actualWeight > 0 
-      ? lot.actualWeight 
-      : parseFloat(lot.weight) || 0;
-    return acc + weight;
-  }, 0);
+    // 3. Status validity check: Lots must be in hub possession
+    const eligibleStatuses = ['RECEIVED', 'AWAITING_COLLECTOR_CONFIRMATION', 'PURCHASE_CONFIRMED', 'PAYMENT_PENDING', 'PAID'];
+    for (const lot of lots) {
+      if (!eligibleStatuses.includes(lot.status)) {
+        throw new Error(`Lot ${lot.id.slice(0, 6)} is in status "${lot.status}". Only received or settled lots can be shipped.`);
+      }
+    }
 
-  const roundedPlanned = parseFloat(plannedQuantity.toFixed(2));
-  const shipmentId = `SHP-2026-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
-  const handoverHash = generateShipmentHash(shipmentId, params.material, roundedPlanned);
+    // Calculate planned quantity using actual weights (fallback to estimated if missing)
+    const plannedQuantity = lots.reduce((acc, lot) => {
+      const weight = typeof lot.actualWeight === 'number' && lot.actualWeight > 0 
+        ? lot.actualWeight 
+        : parseFloat(lot.weight) || 0;
+      return acc + weight;
+    }, 0);
 
-  const shipment: Shipment = {
-    id: shipmentId,
-    hubId: hub.id,
-    hubName: hub.name,
-    recyclerId: recycler.id,
-    recyclerName: recycler.name,
-    material: params.material,
-    lotIds: params.lotIds,
-    plannedQuantity: roundedPlanned,
-    status: 'READY',
-    handoverHash,
-    createdAt: Date.now(),
-    updatedAt: Date.now()
-  };
+    const roundedPlanned = parseFloat(plannedQuantity.toFixed(2));
+    const shipmentId = `SHP-2026-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
+    const handoverHash = generateShipmentHash(shipmentId, params.material, roundedPlanned);
+    const fullSha256Hash = generateFullShipmentSha256(shipmentId, params.material, roundedPlanned);
 
-  await db.shipments.put(shipment);
+    const shipment: Shipment = {
+      id: shipmentId,
+      hubId: hub.id,
+      hubName: hub.name,
+      recyclerId: recycler.id,
+      recyclerName: recycler.name,
+      material: params.material,
+      lotIds: params.lotIds,
+      plannedQuantity: roundedPlanned,
+      status: 'READY',
+      handoverHash,
+      fullSha256Hash,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
 
-  // Link lots to shipment
-  for (const lot of lots) {
-    await db.lots.update(lot.id, {
-      shipmentId: shipment.id
-    });
-  }
+    await db.shipments.put(shipment);
 
-  return shipment;
+    // Atomically link lots to this shipment
+    for (const lot of lots) {
+      await db.lots.update(lot.id, {
+        shipmentId: shipment.id
+      });
+    }
+
+    return shipment;
+  });
 }
 
 /**
@@ -392,9 +425,10 @@ export async function dispatchShipment(shipmentId: string, dispatchedQuantity?: 
 /**
  * Phase 5 & 8: Recycler receives aggregated shipment and logs weighbridge verification & discrepancies.
  * Supports overloaded arguments or options object.
+ * Enforces idempotency (blocks duplicate intake) and transit tolerance checks.
  */
 export async function receiveShipmentAtRecycler(
-  arg1: string | { shipmentId: string; receivedWeight: number; handoverCode?: string; note?: string },
+  arg1: string | { shipmentId: string; receivedWeight: number; handoverCode?: string; note?: string; tolerancePercent?: number },
   arg2?: number,
   arg3?: string
 ): Promise<Shipment> {
@@ -402,12 +436,14 @@ export async function receiveShipmentAtRecycler(
   let recyclerReceivedQuantity: number;
   let inspectionNote: string | undefined;
   let handoverCode: string | undefined;
+  let tolerancePercent: number = 1.0;
 
   if (typeof arg1 === 'object') {
     shipmentId = arg1.shipmentId;
     recyclerReceivedQuantity = arg1.receivedWeight;
     inspectionNote = arg1.note;
     handoverCode = arg1.handoverCode;
+    if (arg1.tolerancePercent) tolerancePercent = arg1.tolerancePercent;
   } else {
     shipmentId = arg1;
     recyclerReceivedQuantity = arg2 as number;
@@ -417,8 +453,19 @@ export async function receiveShipmentAtRecycler(
   const shipment = await db.shipments.get(shipmentId);
   if (!shipment) throw new Error(`Shipment not found: ${shipmentId}`);
 
-  if (handoverCode && shipment.handoverHash && handoverCode !== shipment.handoverHash) {
-    throw new Error(`Manifest verification failed: Handover code ${handoverCode} does not match expected code ${shipment.handoverHash}.`);
+  // Idempotency: Prevent duplicate receipt confirmation
+  if (shipment.status === 'RECEIVED_BY_RECYCLER' || shipment.status === 'COMPLETED') {
+    throw new Error(`Shipment ${shipmentId} has already been received at the recycler gate. Duplicate intake blocked.`);
+  }
+
+  // Integrity Check: Compare against 6-digit manifest code or full SHA-256 hash
+  if (handoverCode) {
+    const trimmedCode = handoverCode.trim();
+    const matches6Digit = shipment.handoverHash && trimmedCode === shipment.handoverHash;
+    const matchesFullHash = shipment.fullSha256Hash && trimmedCode.toLowerCase() === shipment.fullSha256Hash.toLowerCase();
+    if (!matches6Digit && !matchesFullHash) {
+      throw new Error(`Manifest verification failed: Handover code "${handoverCode}" does not match expected code "${shipment.handoverHash}".`);
+    }
   }
 
   if (recyclerReceivedQuantity < 0 || isNaN(recyclerReceivedQuantity)) {
@@ -427,14 +474,29 @@ export async function receiveShipmentAtRecycler(
 
   const dispatchedQty = shipment.dispatchedQuantity || shipment.plannedQuantity;
   const discrepancy = parseFloat((recyclerReceivedQuantity - dispatchedQty).toFixed(2));
+  const { isWithinTolerance, actualPercent } = isDiscrepancyWithinTolerance(discrepancy, dispatchedQty, tolerancePercent);
 
-  await db.shipments.update(shipmentId, {
-    status: 'RECEIVED_BY_RECYCLER',
-    recyclerReceivedQuantity,
-    discrepancyQuantity: discrepancy,
-    discrepancyNote: inspectionNote || (discrepancy === 0 ? 'Exact weighbridge match' : `Discrepancy: ${discrepancy > 0 ? '+' : ''}${discrepancy} kg`),
-    receivedTimestamp: Date.now(),
-    updatedAt: Date.now()
+  await db.transaction('rw', [db.shipments, db.lots], async () => {
+    await db.shipments.update(shipmentId, {
+      status: 'RECEIVED_BY_RECYCLER',
+      recyclerReceivedQuantity,
+      discrepancyQuantity: discrepancy,
+      toleranceExceeded: !isWithinTolerance,
+      discrepancyNote: inspectionNote || (
+        discrepancy === 0 
+          ? 'Exact weighbridge match (0.00% variance)' 
+          : `Discrepancy: ${discrepancy > 0 ? '+' : ''}${discrepancy} kg (${actualPercent}% variance${!isWithinTolerance ? ' - EXCEEDS TOLERANCE' : ''})`
+      ),
+      receivedTimestamp: Date.now(),
+      updatedAt: Date.now()
+    });
+
+    // Mark participating lots as COMPLETED in the formal recycling chain
+    if (shipment.lotIds && shipment.lotIds.length > 0) {
+      for (const lId of shipment.lotIds) {
+        await db.lots.update(lId, { status: 'COMPLETED' });
+      }
+    }
   });
 
   return (await db.shipments.get(shipmentId))!;
