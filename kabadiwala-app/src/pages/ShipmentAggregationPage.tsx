@@ -52,8 +52,6 @@ export default function ShipmentAggregationPage() {
     [activeHubId]
   ) || [];
 
-  // Lots available for aggregation:
-  // Must belong to this hub, matching material, eligible received status, and NOT yet in another shipment
   const eligibleStatuses = ['RECEIVED', 'AWAITING_COLLECTOR_CONFIRMATION', 'PURCHASE_CONFIRMED', 'PAYMENT_PENDING', 'PAID'];
   const eligibleLots = allLots.filter(lot => {
     const isMaterialMatch = lot.material === selectedMaterial;
@@ -63,7 +61,6 @@ export default function ShipmentAggregationPage() {
     return isMaterialMatch && isEligibleStatus && isUnassigned && isHubMatch;
   });
 
-  // Calculate live totals for checked lots
   const selectedLots = eligibleLots.filter(l => selectedLotIds.includes(l.id));
   const totalSelectedWeight = selectedLots.reduce((acc, l) => {
     const wt = typeof l.actualWeight === 'number' && l.actualWeight > 0 ? l.actualWeight : parseFloat(l.weight) || 0;
@@ -92,7 +89,7 @@ export default function ShipmentAggregationPage() {
     setSuccessMsg(null);
 
     if (selectedLotIds.length === 0) {
-      setErrorMsg('Please select at least one lot to aggregate into this shipment.');
+      setErrorMsg('Please select at least one received lot to aggregate into this bulk shipment.');
       return;
     }
 
@@ -115,234 +112,269 @@ export default function ShipmentAggregationPage() {
   const handleDispatch = async (shipment: Shipment) => {
     try {
       await dispatchShipment(shipment.id);
-      alert(`Shipment ${shipment.id} marked as DISPATCHED to ${shipment.recyclerName}.`);
+      alert(`Shipment ${shipment.id} dispatched to ${shipment.recyclerName}. Status updated to IN TRANSIT.`);
     } catch (err: any) {
       alert(err.message || 'Failed to dispatch shipment.');
     }
   };
 
   return (
-    <div className="p-4 max-w-md mx-auto pb-28 text-[#14213D]">
-      {/* Top Header */}
-      <div className="flex items-center justify-between mb-4">
+    <div className="p-4 sm:p-6 max-w-4xl mx-auto pb-28">
+      {/* Top Header & Navigation */}
+      <div className="flex items-center justify-between mb-5 no-print">
         <button 
           onClick={() => navigate('/hub')}
-          className="p-2 rounded-xl bg-white border border-gray-200 text-gray-700 flex items-center text-xs font-bold shadow-sm"
+          className="btn-secondary text-xs py-2 px-3.5"
         >
-          <ArrowLeft size={16} className="mr-1" /> Back to Hub
+          <ArrowLeft size={15} /> Back to Hub Intake
         </button>
-        <div className="flex items-center space-x-1 text-xs font-bold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full">
-          <Truck size={14} className="mr-1" />
-          <span>Bulk Aggregation</span>
+        <div className="flex items-center gap-1.5 text-xs font-bold text-[#166534] bg-[#dcfce7] px-3 py-1 rounded-full">
+          <Truck size={13} />
+          <span>Form 6 Cargo Aggregation</span>
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl p-4 mb-4 shadow-sm border border-gray-100">
-        <h1 className="text-xl font-black text-[#14213D]">Outgoing Recycler Shipments</h1>
-        <p className="text-xs text-gray-500 mt-0.5">
-          Aggregate street collector batches into CPCB-traceable commercial shipments.
-        </p>
-      </div>
+      {/* Main Intro Card */}
+      <div className="kc-card p-5 sm:p-6 mb-5 bg-white border-l-4 border-l-[#166534]">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <h1 className="text-xl sm:text-2xl font-black text-[#1f2937]">Outgoing Recycler Shipments</h1>
+            <p className="text-xs text-[#64748b] mt-1">
+              Bundle verified street collector batches into CPCB-compliant commercial bulk shipments.
+            </p>
+          </div>
 
-      {/* Tabs */}
-      <div className="flex space-x-2 mb-4 bg-gray-200 p-1 rounded-2xl">
-        <button
-          onClick={() => setActiveTab('CREATE')}
-          className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition ${
-            activeTab === 'CREATE' ? 'bg-white text-[#14213D] shadow-sm' : 'text-gray-600 hover:text-black'
-          }`}
-        >
-          + Aggregate New Batch
-        </button>
-        <button
-          onClick={() => setActiveTab('LIST')}
-          className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition flex items-center justify-center ${
-            activeTab === 'LIST' ? 'bg-white text-[#14213D] shadow-sm' : 'text-gray-600 hover:text-black'
-          }`}
-        >
-          Shipments <span className="ml-1.5 bg-[#14213D] text-white text-[10px] px-1.5 py-0.2 rounded-full font-bold">{shipments.length}</span>
-        </button>
+          {/* Tab Switcher */}
+          <div className="flex bg-[#f1f5f9] p-1 rounded-xl self-start sm:self-auto border border-[#e2e8f0]">
+            <button
+              onClick={() => setActiveTab('CREATE')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                activeTab === 'CREATE'
+                  ? 'bg-white text-[#166534] shadow-xs'
+                  : 'text-[#64748b] hover:text-[#1f2937]'
+              }`}
+            >
+              + Aggregate New Batch
+            </button>
+            <button
+              onClick={() => setActiveTab('LIST')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                activeTab === 'LIST'
+                  ? 'bg-white text-[#166534] shadow-xs'
+                  : 'text-[#64748b] hover:text-[#1f2937]'
+              }`}
+            >
+              Shipments
+              <span className="bg-[#166534] text-white text-[10px] px-1.5 py-0.2 rounded-full font-bold">
+                {shipments.length}
+              </span>
+            </button>
+          </div>
+        </div>
       </div>
 
       {successMsg && (
-        <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-xl text-green-800 text-xs flex items-center">
-          <CheckCircle2 size={16} className="mr-2 text-green-600 flex-shrink-0" />
-          <span>{successMsg}</span>
+        <div className="mb-4 p-3.5 bg-[#f0fdf4] border border-[#bbf7d0] rounded-xl text-[#166534] text-xs flex items-center gap-2">
+          <CheckCircle2 size={16} className="text-[#16a34a] flex-shrink-0" />
+          <span className="font-medium">{successMsg}</span>
         </div>
       )}
 
       {errorMsg && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-800 text-xs flex items-center">
-          <AlertCircle size={16} className="mr-2 text-red-600 flex-shrink-0" />
-          <span>{errorMsg}</span>
+        <div className="mb-4 p-3.5 bg-[#fef2f2] border border-[#fecaca] rounded-xl text-[#b91c1c] text-xs flex items-center gap-2">
+          <AlertCircle size={16} className="flex-shrink-0" />
+          <span className="font-medium">{errorMsg}</span>
         </div>
       )}
 
       {/* TAB 1: CREATE SHIPMENT */}
       {activeTab === 'CREATE' && (
-        <div className="space-y-4">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           
-          {/* Step 1: Material Selection */}
-          <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm space-y-2">
-            <label className="block text-xs font-bold text-gray-700">
-              1. Select Compatible Material Category
-            </label>
-            <div className="grid grid-cols-3 gap-2">
-              {CATEGORIES.map(cat => (
-                <button
-                  key={cat}
-                  type="button"
-                  onClick={() => {
-                    setSelectedMaterial(cat);
-                    setSelectedLotIds([]);
-                  }}
-                  className={`p-2.5 rounded-xl text-center text-xs font-bold border-2 transition ${
-                    selectedMaterial === cat 
-                      ? 'border-blue-600 bg-blue-50 text-blue-900 shadow-sm' 
-                      : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-                  }`}
-                >
-                  {cat.split(' ')[0]}
-                </button>
-              ))}
+          <div className="lg:col-span-2 space-y-4">
+            {/* Step 1: Material Category */}
+            <div className="kc-card p-4 sm:p-5 space-y-2.5">
+              <label className="block text-xs font-bold text-[#1f2937] uppercase tracking-wider">
+                1. Select Material Category
+              </label>
+              <div className="grid grid-cols-3 gap-2.5">
+                {CATEGORIES.map(cat => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => {
+                      setSelectedMaterial(cat);
+                      setSelectedLotIds([]);
+                    }}
+                    className={`p-3 rounded-xl text-center text-xs font-bold border-2 transition ${
+                      selectedMaterial === cat 
+                        ? 'border-[#166534] bg-[#f0fdf4] text-[#166534] shadow-xs' 
+                        : 'border-[#e2e8f0] bg-white text-[#64748b] hover:border-gray-300'
+                    }`}
+                  >
+                    {cat.split(' ')[0]}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-[#94a3b8]">
+                Only lots of identical material category can be aggregated into a single transport manifest.
+              </p>
             </div>
-            <p className="text-[10px] text-gray-400">
-              Only batches of the same material can be combined to maintain recyclability standards.
-            </p>
-          </div>
 
-          {/* Step 2: Select Destination Recycler */}
-          <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm space-y-2">
-            <label className="block text-xs font-bold text-gray-700">
-              2. Select Destination Authorized Recycler
-            </label>
-            <div className="space-y-2">
-              {recyclers.map(r => (
-                <div
-                  key={r.id}
-                  onClick={() => setSelectedRecyclerId(r.id)}
-                  className={`p-3 rounded-xl border-2 cursor-pointer flex justify-between items-center transition ${
-                    selectedRecyclerId === r.id
-                      ? 'border-blue-600 bg-blue-50'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <div>
-                    <p className="font-bold text-xs text-[#14213D] flex items-center">
-                      {r.name}
-                      <span className="ml-1.5 text-[9px] bg-green-100 text-green-800 font-bold px-1.5 py-0.2 rounded">
-                        CPCB
-                      </span>
-                    </p>
-                    <p className="text-[10px] text-gray-400 font-mono">Rate: ₹{r.rate}/kg • {r.distance} km</p>
+            {/* Step 2: Destination Recycler */}
+            <div className="kc-card p-4 sm:p-5 space-y-2.5">
+              <label className="block text-xs font-bold text-[#1f2937] uppercase tracking-wider">
+                2. Select Destination Recycler
+              </label>
+              <div className="space-y-2">
+                {recyclers.map(r => (
+                  <div
+                    key={r.id}
+                    onClick={() => setSelectedRecyclerId(r.id)}
+                    className={`p-3 rounded-xl border-2 cursor-pointer flex justify-between items-center transition ${
+                      selectedRecyclerId === r.id
+                        ? 'border-[#166534] bg-[#f0fdf4]'
+                        : 'border-[#e2e8f0] hover:border-gray-300'
+                    }`}
+                  >
+                    <div>
+                      <p className="font-black text-xs text-[#1f2937] flex items-center gap-1.5">
+                        {r.name}
+                        <span className="badge badge-success text-[9px] py-0">
+                          CPCB
+                        </span>
+                      </p>
+                      <p className="text-[10px] text-[#64748b] font-mono mt-0.5">Rate: ₹{r.rate}/kg · Distance: {r.distance} km</p>
+                    </div>
+                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                      selectedRecyclerId === r.id ? 'border-[#166534] bg-[#166534]' : 'border-gray-300'
+                    }`}>
+                      {selectedRecyclerId === r.id && <div className="w-1.5 h-1.5 bg-white rounded-full"></div>}
+                    </div>
                   </div>
-                  <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                    selectedRecyclerId === r.id ? 'border-blue-600 bg-blue-600' : 'border-gray-300'
-                  }`}>
-                    {selectedRecyclerId === r.id && <div className="w-1.5 h-1.5 bg-white rounded-full"></div>}
-                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Step 3: Choose Received Lots */}
+            <div className="kc-card p-4 sm:p-5 space-y-3">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-xs font-bold text-[#1f2937] uppercase tracking-wider">
+                    3. Select Stock Lots ({eligibleLots.length} available)
+                  </h2>
+                  <p className="text-[11px] text-[#64748b]">Unassigned scrap lots stored in depot godown</p>
                 </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Step 3: Choose Received Lots */}
-          <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm space-y-3">
-            <div className="flex justify-between items-center">
-              <div>
-                <h2 className="text-xs font-bold text-gray-700">
-                  3. Select Unassigned Stock Batches ({eligibleLots.length})
-                </h2>
-                <p className="text-[10px] text-gray-400">Received scrap lots stored in godown</p>
+                {eligibleLots.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleSelectAll}
+                    className="text-xs text-[#166534] font-bold hover:underline"
+                  >
+                    {selectedLotIds.length === eligibleLots.length ? 'Deselect All' : 'Select All'}
+                  </button>
+                )}
               </div>
-              {eligibleLots.length > 0 && (
-                <button
-                  type="button"
-                  onClick={handleSelectAll}
-                  className="text-xs text-blue-600 font-bold hover:underline"
-                >
-                  {selectedLotIds.length === eligibleLots.length ? 'Deselect All' : 'Select All'}
-                </button>
-              )}
-            </div>
 
-            {eligibleLots.length === 0 ? (
-              <div className="p-6 text-center text-gray-400 border border-dashed border-gray-200 rounded-xl">
-                <Package size={24} className="mx-auto mb-1 text-gray-300" />
-                <p className="text-xs font-medium">No available lots of "{selectedMaterial}".</p>
-                <p className="text-[10px] text-gray-400 mt-0.5">
-                  Receive scrap from collectors first or switch material category.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                {eligibleLots.map(lot => {
-                  const isChecked = selectedLotIds.includes(lot.id);
-                  const wt = typeof lot.actualWeight === 'number' && lot.actualWeight > 0 
-                    ? lot.actualWeight 
-                    : parseFloat(lot.weight);
+              {eligibleLots.length === 0 ? (
+                <div className="p-8 text-center text-[#64748b] border border-dashed border-[#e2e8f0] rounded-xl">
+                  <Package size={28} className="mx-auto mb-2 text-[#94a3b8]" />
+                  <p className="text-xs font-bold text-[#1f2937]">No stock lots found for "{selectedMaterial}".</p>
+                  <p className="text-[11px] text-[#94a3b8] mt-0.5">
+                    Intake loads from informal collectors on the Hub Intake page or switch category.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                  {eligibleLots.map(lot => {
+                    const isChecked = selectedLotIds.includes(lot.id);
+                    const wt = typeof lot.actualWeight === 'number' && lot.actualWeight > 0 
+                      ? lot.actualWeight 
+                      : parseFloat(lot.weight);
 
-                  return (
-                    <div
-                      key={lot.id}
-                      onClick={() => handleToggleLot(lot.id)}
-                      className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition ${
-                        isChecked ? 'bg-blue-50/70 border-blue-400' : 'bg-gray-50 border-gray-200 hover:bg-gray-100/70'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-2.5">
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => {}} // handled by div click
-                          className="w-4 h-4 text-blue-600 rounded"
-                        />
-                        <div>
-                          <p className="font-bold text-xs text-[#14213D]">
-                            Lot #{lot.id.slice(0, 6)} • {lot.condition || 'Mixed'}
-                          </p>
-                          <p className="text-[10px] text-gray-500 font-mono">
-                            Col: {lot.collectorId || 'KAB-7842'} • Status: {lot.status}
+                    return (
+                      <div
+                        key={lot.id}
+                        onClick={() => handleToggleLot(lot.id)}
+                        className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition ${
+                          isChecked 
+                            ? 'bg-[#f0fdf4] border-[#86efac]' 
+                            : 'bg-[#f8fafc] border-[#e2e8f0] hover:bg-white'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {}}
+                            className="w-4 h-4 text-[#166534] rounded cursor-pointer accent-[#166534]"
+                          />
+                          <div>
+                            <p className="font-bold text-xs text-[#1f2937]">
+                              Lot #{lot.id.slice(0, 8)} · {lot.condition || 'Mixed'}
+                            </p>
+                            <p className="text-[10px] text-[#64748b] font-mono">
+                              Collector: {lot.collectorId || 'KAB-7842'} · Status: {lot.status}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="text-right">
+                          <span className="font-black text-xs text-[#1f2937]">{wt.toFixed(2)} kg</span>
+                          <p className="text-[10px] text-[#166534] font-bold">
+                            ₹{(lot.purchaseAmount || lot.estimate).toLocaleString('en-IN')}
                           </p>
                         </div>
                       </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
-                      <div className="text-right">
-                        <span className="font-bold text-xs text-[#14213D]">{wt.toFixed(2)} kg</span>
-                        <p className="text-[10px] text-green-700 font-bold">
-                          ₹{(lot.purchaseAmount || lot.estimate).toLocaleString('en-IN')}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
           </div>
 
-          {/* Aggregated Live Total Card */}
-          <div className="bg-[#14213D] text-white p-4 rounded-2xl shadow-lg space-y-2 font-mono">
-            <div className="flex justify-between items-center text-xs text-gray-300">
-              <span>Batches Selected:</span>
-              <span className="font-bold text-white">{selectedLotIds.length}</span>
-            </div>
-            <div className="flex justify-between items-center text-xs text-gray-300">
-              <span>Total Bulk Weight:</span>
-              <span className="text-xl font-black text-[#FFC72C]">{totalSelectedWeight.toFixed(2)} KG</span>
-            </div>
-            <div className="flex justify-between items-center text-xs text-gray-300 border-t border-white/10 pt-1.5">
-              <span>Hub Procurement Cost:</span>
-              <span className="font-bold text-white">₹{totalPurchaseValue.toLocaleString('en-IN')}</span>
-            </div>
+          {/* Right Column: Aggregation Summary Card */}
+          <div className="lg:col-span-1">
+            <div className="kc-card p-5 sticky top-20 space-y-4 bg-white border-2 border-[#166534]">
+              <div>
+                <span className="badge badge-success text-[10px]">Commercial Cargo Summary</span>
+                <h3 className="font-black text-base text-[#1f2937] mt-1">Aggregated Load</h3>
+                <p className="text-xs text-[#64748b]">CPCB Form 6 Electronic Manifest</p>
+              </div>
 
-            <button
-              onClick={handleCreateShipment}
-              disabled={selectedLotIds.length === 0}
-              className="w-full mt-3 py-3 rounded-xl bg-[#FFC72C] text-[#14213D] font-black text-sm flex items-center justify-center hover:bg-yellow-400 disabled:opacity-40 transition active:scale-[0.98] shadow"
-            >
-              <Truck size={16} className="mr-2" />
-              Generate Form 6 Bulk Shipment
-            </button>
+              <div className="p-3 bg-[#f8fafc] rounded-xl border border-[#e2e8f0] space-y-2 text-xs font-mono">
+                <div className="flex justify-between text-[#64748b]">
+                  <span>Category:</span>
+                  <span className="font-bold text-[#1f2937]">{selectedMaterial}</span>
+                </div>
+                <div className="flex justify-between text-[#64748b]">
+                  <span>Lots Selected:</span>
+                  <span className="font-bold text-[#1f2937]">{selectedLotIds.length}</span>
+                </div>
+                <div className="flex justify-between text-[#64748b] border-t border-[#e2e8f0] pt-2">
+                  <span>Gross Weight:</span>
+                  <span className="text-base font-black text-[#166534]">{totalSelectedWeight.toFixed(2)} KG</span>
+                </div>
+                <div className="flex justify-between text-[#64748b]">
+                  <span>Procurement Cost:</span>
+                  <span className="font-bold text-[#1f2937]">₹{totalPurchaseValue.toLocaleString('en-IN')}</span>
+                </div>
+              </div>
+
+              <button
+                onClick={handleCreateShipment}
+                disabled={selectedLotIds.length === 0}
+                className="btn-primary w-full py-3.5 text-sm shadow-md"
+              >
+                <Truck size={16} />
+                Generate Bulk Cargo Manifest
+              </button>
+
+              <p className="text-[11px] text-[#94a3b8] text-center leading-relaxed">
+                Locks selected collector batches and generates a cryptographic SHA-256 cargo verification hash.
+              </p>
+            </div>
           </div>
 
         </div>
@@ -352,202 +384,206 @@ export default function ShipmentAggregationPage() {
       {activeTab === 'LIST' && (
         <div className="space-y-4">
           {shipments.length === 0 ? (
-            <div className="bg-white p-8 rounded-2xl text-center text-gray-400 border border-dashed border-gray-200">
-              <Truck size={32} className="mx-auto mb-2 text-gray-300" />
-              <p className="font-bold text-sm text-gray-600">No outgoing shipments created yet.</p>
-              <p className="text-xs mt-1">Aggregate received lots to dispatch bulk loads to recyclers.</p>
+            <div className="kc-card p-10 text-center text-[#64748b] border-dashed">
+              <Truck size={36} className="mx-auto mb-2 text-[#94a3b8]" />
+              <p className="font-bold text-sm text-[#1f2937]">No bulk shipments created yet</p>
+              <p className="text-xs mt-1 text-[#64748b]">
+                Aggregate received stock batches in the "Aggregate New Batch" tab to dispatch to authorized recyclers.
+              </p>
             </div>
           ) : (
-            shipments.map(s => {
-              const isDispatched = s.status === 'DISPATCHED';
-              const isReceived = s.status === 'RECEIVED_BY_RECYCLER' || s.status === 'COMPLETED';
-              const isReady = s.status === 'READY';
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {shipments.map(s => {
+                const isDispatched = s.status === 'DISPATCHED';
+                const isReceived = s.status === 'RECEIVED_BY_RECYCLER' || s.status === 'COMPLETED';
+                const isReady = s.status === 'READY';
 
-              return (
-                <div key={s.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 space-y-3">
-                  
-                  {/* Top Bar */}
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <div className="flex items-center space-x-2">
-                        <span className="font-mono font-black text-sm text-[#14213D]">{s.id}</span>
-                        <span className="text-[10px] bg-blue-50 text-blue-700 font-bold px-2 py-0.5 rounded">
-                          {s.material}
+                return (
+                  <div key={s.id} className="kc-card p-4 space-y-3 flex flex-col justify-between">
+                    <div className="space-y-2.5">
+                      <div className="flex justify-between items-start gap-2">
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-mono font-black text-sm text-[#1f2937]">{s.id}</span>
+                            <span className="badge badge-active text-[10px]">
+                              {s.material}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-[#64748b] flex items-center gap-1 mt-1">
+                            <Building2 size={12} className="text-gray-400" />
+                            Dest: <strong className="text-[#1f2937]">{s.recyclerName}</strong>
+                          </p>
+                        </div>
+
+                        <div className="text-right flex-shrink-0">
+                          <span className="font-black text-base text-[#1f2937]">{s.plannedQuantity} kg</span>
+                          <p className="text-[10px] text-[#64748b] font-mono">{s.lotIds.length} lots</p>
+                        </div>
+                      </div>
+
+                      {/* Status indicator */}
+                      <div className="p-2 bg-[#f8fafc] rounded-xl border border-[#e2e8f0] flex justify-between items-center text-xs">
+                        <div>
+                          {isReady && (
+                            <span className="inline-flex items-center gap-1 text-amber-800 font-bold text-[11px]">
+                              <Clock size={13} /> Ready at Hub (Awaiting Dispatch)
+                            </span>
+                          )}
+                          {isDispatched && (
+                            <span className="inline-flex items-center gap-1 text-[#1d4ed8] font-bold text-[11px]">
+                              <Truck size={13} /> Dispatched · In Transit
+                            </span>
+                          )}
+                          {isReceived && (
+                            <span className="inline-flex items-center gap-1 text-[#166534] font-bold text-[11px]">
+                              <CheckCircle2 size={13} /> Delivered & Verified by Recycler
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-[#94a3b8] font-mono">
+                          {new Date(s.createdAt).toLocaleDateString()}
                         </span>
                       </div>
-                      <p className="text-[11px] text-gray-500 flex items-center mt-0.5">
-                        <Building2 size={12} className="mr-1 text-gray-400" />
-                        Dest: <strong className="ml-1 text-[#14213D]">{s.recyclerName}</strong>
-                      </p>
-                    </div>
 
-                    <div className="text-right">
-                      <span className="font-black text-base text-[#14213D]">{s.plannedQuantity} kg</span>
-                      <p className="text-[10px] text-gray-400 font-mono">{s.lotIds.length} lots</p>
-                    </div>
-                  </div>
-
-                  {/* Status Indicator */}
-                  <div className="bg-gray-50 p-2.5 rounded-xl border border-gray-100 flex justify-between items-center text-xs">
-                    <div className="flex items-center">
-                      {isReady && (
-                        <span className="inline-flex items-center text-amber-700 font-bold text-[11px]">
-                          <Clock size={13} className="mr-1" /> Ready at Hub (Awaiting Dispatch)
-                        </span>
-                      )}
-                      {isDispatched && (
-                        <span className="inline-flex items-center text-blue-700 font-bold text-[11px]">
-                          <Truck size={13} className="mr-1" /> Dispatched • In Transit
-                        </span>
-                      )}
-                      {isReceived && (
-                        <span className="inline-flex items-center text-green-700 font-bold text-[11px]">
-                          <CheckCircle2 size={13} className="mr-1" /> Delivered & Verified by Recycler
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-[10px] text-gray-400 font-mono">
-                      {new Date(s.createdAt).toLocaleDateString()}
-                    </span>
-                  </div>
-
-                  {/* Recycler Received Weight & Discrepancy Reporting */}
-                  {isReceived && typeof s.recyclerReceivedQuantity === 'number' && (
-                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 text-xs font-mono space-y-1">
-                      <div className="flex justify-between text-emerald-900 font-bold">
-                        <span>Recycler Scale Received:</span>
-                        <span>{s.recyclerReceivedQuantity} kg</span>
-                      </div>
-                      {typeof s.discrepancyQuantity === 'number' && s.discrepancyQuantity !== 0 && (
-                        <div className="flex justify-between text-amber-800 text-[11px]">
-                          <span>Weighbridge Discrepancy:</span>
-                          <span className="font-bold">
-                            {s.discrepancyQuantity > 0 ? '+' : ''}{s.discrepancyQuantity} kg
-                          </span>
+                      {/* Recycler Received Weight & Discrepancy */}
+                      {isReceived && typeof s.recyclerReceivedQuantity === 'number' && (
+                        <div className="p-2.5 bg-[#f0fdf4] border border-[#bbf7d0] rounded-xl text-xs font-mono space-y-1">
+                          <div className="flex justify-between text-[#166534] font-bold">
+                            <span>Recycler Scale Received:</span>
+                            <span>{s.recyclerReceivedQuantity} kg</span>
+                          </div>
+                          {typeof s.discrepancyQuantity === 'number' && s.discrepancyQuantity !== 0 && (
+                            <div className="flex justify-between text-amber-800 text-[11px]">
+                              <span>Weighbridge Variance:</span>
+                              <span className="font-bold">
+                                {s.discrepancyQuantity > 0 ? '+' : ''}{s.discrepancyQuantity} kg
+                              </span>
+                            </div>
+                          )}
+                          {s.discrepancyNote && (
+                            <p className="text-[10px] text-[#15803d]">Note: {s.discrepancyNote}</p>
+                          )}
                         </div>
                       )}
-                      {s.discrepancyNote && (
-                        <p className="text-[10px] text-emerald-700">Note: {s.discrepancyNote}</p>
-                      )}
+
+                      {/* Tamper Code */}
+                      <div className="p-2 rounded-xl bg-[#f8fafc] border border-dashed border-[#cbd5e1] flex items-center justify-between text-xs font-mono">
+                        <span className="text-[#64748b] text-[10px] uppercase">Manifest Code:</span>
+                        <span className="font-black text-sm tracking-widest text-[#166534]">{s.handoverHash}</span>
+                      </div>
                     </div>
-                  )}
 
-                  {/* Tamper Evident Verification Hash */}
-                  <div className="border border-dashed border-gray-300 bg-gray-50/50 p-2 rounded-xl flex items-center justify-between text-xs font-mono">
-                    <span className="text-gray-400 text-[10px] uppercase">SHA-256 Manifest Code:</span>
-                    <span className="font-black text-sm tracking-widest text-[#14213D]">{s.handoverHash}</span>
-                  </div>
+                    {/* Action buttons */}
+                    <div className="flex gap-2 pt-2">
+                      {isReady && (
+                        <button
+                          onClick={() => handleDispatch(s)}
+                          className="btn-primary flex-1 py-2 text-xs"
+                        >
+                          <Truck size={14} /> Dispatch Load
+                        </button>
+                      )}
 
-                  {/* Action Buttons */}
-                  <div className="flex space-x-2 pt-1">
-                    {isReady && (
                       <button
-                        onClick={() => handleDispatch(s)}
-                        className="flex-1 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center justify-center transition active:scale-95 shadow"
+                        onClick={() => setPrintingShipment(s)}
+                        className="btn-secondary flex-1 py-2 text-xs"
                       >
-                        <Truck size={14} className="mr-1.5" /> Dispatch Load
+                        <Printer size={14} /> Form 6 Manifest
                       </button>
-                    )}
+                    </div>
 
-                    <button
-                      onClick={() => setPrintingShipment(s)}
-                      className="flex-1 py-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold text-xs flex items-center justify-center transition active:scale-95"
-                    >
-                      <Printer size={14} className="mr-1.5 text-gray-600" /> Form 6 Manifest
-                    </button>
                   </div>
-
-                </div>
-              );
-            })
+                );
+              })}
+            </div>
           )}
         </div>
       )}
 
       {/* MODAL: Form 6 Bulk Manifest Printable View */}
       {printingShipment && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl p-6 relative space-y-4 my-6">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs z-50 flex items-center justify-center p-3 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl p-5 sm:p-6 relative space-y-4 my-6">
             
-            <div className="border-b-2 border-dashed border-gray-300 pb-3 text-center">
-              <div className="inline-flex items-center bg-blue-50 text-blue-800 text-[10px] font-black uppercase px-2.5 py-1 rounded-full mb-1">
-                <ShieldCheck size={12} className="mr-1 text-blue-600" />
+            <div className="border-b-2 border-dashed border-[#cbd5e1] pb-3 text-center">
+              <div className="inline-flex items-center gap-1.5 bg-[#dcfce7] text-[#166534] text-[10px] font-black uppercase px-2.5 py-1 rounded-full mb-1">
+                <ShieldCheck size={12} />
                 Official Form 6 E-Waste Bulk Transport Manifest
               </div>
-              <h2 className="text-xl font-black text-[#14213D]">AGGREGATED CARGO MANIFEST</h2>
-              <p className="text-xs font-mono text-gray-500">Manifest ID: {printingShipment.id}</p>
+              <h2 className="text-xl font-black text-[#1f2937]">AGGREGATED CARGO MANIFEST</h2>
+              <p className="text-xs font-mono text-[#64748b]">Manifest ID: {printingShipment.id}</p>
             </div>
 
             {/* SHA Hash Code Card */}
-            <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-center">
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+            <div className="bg-[#f8fafc] border border-[#e2e8f0] rounded-xl p-3 text-center">
+              <span className="text-[10px] font-bold text-[#64748b] uppercase tracking-wider">
                 Tamper-Evident Cargo Verification Code
               </span>
-              <div className="text-3xl font-black font-mono tracking-widest text-[#14213D] my-1">
+              <div className="text-3xl font-black font-mono tracking-widest text-[#166534] my-1">
                 {printingShipment.handoverHash}
               </div>
-              <p className="text-[10px] text-gray-400">
-                Authorized Recycler scans or types this code at facility gate.
+              <p className="text-[10px] text-[#94a3b8]">
+                Authorized Recycler verifies this code upon weighbridge scale intake.
               </p>
             </div>
 
-            {/* Consignor (Hub) & Consignee (Recycler) */}
+            {/* Hub and Recycler details */}
             <div className="grid grid-cols-2 gap-2 text-xs font-mono">
-              <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
-                <p className="text-[10px] font-bold text-gray-400 uppercase">ORIGIN (HUB)</p>
-                <p className="font-bold text-[#14213D] text-[11px] mt-0.5">{currentHub.name}</p>
-                <p className="text-[10px] text-gray-500">ID: {currentHub.id}</p>
+              <div className="p-3 bg-[#f8fafc] rounded-xl border border-[#e2e8f0]">
+                <p className="text-[10px] font-bold text-[#64748b] uppercase">ORIGIN (HUB)</p>
+                <p className="font-bold text-[#1f2937] text-[11px] mt-0.5">{currentHub.name}</p>
+                <p className="text-[10px] text-[#94a3b8]">ID: {currentHub.id}</p>
               </div>
 
-              <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
-                <p className="text-[10px] font-bold text-gray-400 uppercase">DESTINATION (RECYCLER)</p>
-                <p className="font-bold text-[#14213D] text-[11px] mt-0.5">{printingShipment.recyclerName}</p>
-                <p className="text-[10px] text-green-700 font-bold">CPCB REGISTERED</p>
+              <div className="p-3 bg-[#f8fafc] rounded-xl border border-[#e2e8f0]">
+                <p className="text-[10px] font-bold text-[#64748b] uppercase">DESTINATION</p>
+                <p className="font-bold text-[#1f2937] text-[11px] mt-0.5">{printingShipment.recyclerName}</p>
+                <p className="text-[10px] text-[#166534] font-bold">CPCB REGISTERED</p>
               </div>
             </div>
 
             {/* Bulk Material Specs */}
-            <div className="bg-white border border-gray-200 rounded-xl p-3 text-xs font-mono space-y-1.5">
+            <div className="p-3 bg-white border border-[#e2e8f0] rounded-xl text-xs font-mono space-y-1.5">
               <div className="flex justify-between">
-                <span className="text-gray-500">Bulk Category:</span>
-                <span className="font-bold">{printingShipment.material}</span>
+                <span className="text-[#64748b]">Bulk Category:</span>
+                <span className="font-bold text-[#1f2937]">{printingShipment.material}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-500">Aggregated Batches:</span>
-                <span className="font-bold">{printingShipment.lotIds.length} Collector Lots</span>
+                <span className="text-[#64748b]">Aggregated Batches:</span>
+                <span className="font-bold text-[#1f2937]">{printingShipment.lotIds.length} Collector Lots</span>
               </div>
-              <div className="flex justify-between border-t border-gray-100 pt-1 text-sm font-bold">
+              <div className="flex justify-between border-t border-[#e2e8f0] pt-1.5 text-sm font-bold">
                 <span>Dispatched Weight:</span>
-                <span className="text-green-700">{printingShipment.plannedQuantity} KG</span>
+                <span className="text-[#166534]">{printingShipment.plannedQuantity} KG</span>
               </div>
             </div>
 
             {/* Contributing Lots Traceability List */}
             <div>
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+              <p className="text-[10px] font-bold text-[#64748b] uppercase tracking-wider mb-1">
                 Traceability Audit (Contributed Lots)
               </p>
-              <div className="max-h-28 overflow-y-auto bg-gray-50 p-2 rounded-xl text-[10px] font-mono space-y-1 border border-gray-200">
+              <div className="max-h-28 overflow-y-auto p-2 bg-[#f8fafc] rounded-xl text-[10px] font-mono space-y-1 border border-[#e2e8f0]">
                 {printingShipment.lotIds.map((id, index) => (
-                  <div key={id} className="flex justify-between text-gray-600">
+                  <div key={id} className="flex justify-between text-[#64748b]">
                     <span>Batch #{index + 1}: {id.slice(0, 8)}</span>
-                    <span className="font-bold">Verified in Hub Godown</span>
+                    <span className="font-bold text-[#166534]">Verified in Godown</span>
                   </div>
                 ))}
               </div>
             </div>
 
             {/* Action buttons */}
-            <div className="flex space-x-2 pt-2">
+            <div className="flex gap-2 pt-2">
               <button
                 onClick={() => window.print()}
-                className="w-1/2 py-3 rounded-xl border border-gray-300 font-bold text-xs flex items-center justify-center text-gray-700 hover:bg-gray-50 transition"
+                className="btn-secondary w-1/2 py-2.5 text-xs"
               >
-                <Printer size={14} className="mr-1.5" /> Print Manifest Slip
+                <Printer size={14} /> Print Slip
               </button>
               <button
                 onClick={() => setPrintingShipment(null)}
-                className="w-1/2 py-3 rounded-xl bg-[#14213D] text-white font-bold text-xs hover:bg-blue-900 transition shadow"
+                className="btn-primary w-1/2 py-2.5 text-xs"
               >
                 Close
               </button>

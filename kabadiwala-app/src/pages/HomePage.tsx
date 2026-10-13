@@ -1,123 +1,84 @@
 import { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate } from 'react-router-dom';
-import { 
-  db, 
-  type CollectorProfile, 
-  type Lot, 
-  DEFAULT_PROFILE, 
-  getCollectorProfile, 
-  updateCollectorProfile,
-  DEMO_HUBS 
+import {
+  db, type CollectorProfile, type Lot,
+  DEFAULT_PROFILE, getCollectorProfile, updateCollectorProfile, DEMO_HUBS
 } from '../lib/db';
-import { 
-  requestLotPurchase, 
-  confirmLotPurchaseByCollector 
-} from '../lib/hubService';
+import { requestLotPurchase, confirmLotPurchaseByCollector } from '../lib/hubService';
 import PurchaseReceiptModal from '../components/PurchaseReceiptModal';
-import { 
-  Wallet, 
-  Package, 
-  ArrowRight, 
-  Volume2, 
-  Leaf, 
-  Trophy, 
-  User, 
-  Edit3, 
-  X, 
-  Check, 
-  MapPin, 
-  Building2, 
-  CheckCircle2, 
-  Clock, 
-  Receipt, 
-  Scale
+import {
+  Wallet, Package, Volume2, Leaf, User,
+  Edit3, X, Check, MapPin, Building2, CheckCircle2, Clock,
+  Receipt, Scale, PlusCircle, ChevronRight, AlertTriangle
 } from 'lucide-react';
 
 const LANGUAGES = [
-  { code: 'hi-IN', label: 'hi', greeting: 'नमस्ते', sub: "आज की कीमतें अपडेट हो गई हैं", tts: "आपकी कुल अनुमानित कमाई है" },
-  { code: 'mr-IN', label: 'mr', greeting: 'नमस्कार', sub: "आजचे दर अद्ययावत केले आहेत", tts: "तुमची एकूण अंदाजे कमाई आहे" },
-  { code: 'ta-IN', label: 'ta', greeting: 'வணக்கம்', sub: "இன்றைய விலைகள் புதுப்பிக்கப்பட்டுள்ளன", tts: "உங்கள் மொத்த மதிப்பிடப்பட்ட வருவாய்" },
-  { code: 'te-IN', label: 'te', greeting: 'నమస్కారం', sub: "నేటి ధరలు నవీకరించబడ్డాయి", tts: "మీ మొత్తం అంచనా ఆదాయం" },
-  { code: 'kn-IN', label: 'kn', greeting: 'ನಮಸ್ಕಾರ', sub: "ಇಂದಿನ ಬೆಲೆಗಳನ್ನು ನವೀಕರಿಸಲಾಗಿದೆ", tts: "ನಿಮ್ಮ ಒಟ್ಟು ಅಂದಾಜು ಗಳಿಕೆ" },
-  { code: 'en-US', label: 'en', greeting: 'Hello', sub: "Today's Prices are updated", tts: "Your total estimated earnings are" },
+  { code: 'hi-IN', label: 'HI', greeting: 'नमस्ते', sub: 'आज की कीमतें अपडेट हो गई हैं', tts: 'आपकी कुल अनुमानित कमाई है' },
+  { code: 'mr-IN', label: 'MR', greeting: 'नमस्कार', sub: 'आजचे दर अद्ययावत केले आहेत', tts: 'तुमची एकूण अंदाजे कमाई आहे' },
+  { code: 'ta-IN', label: 'TA', greeting: 'வணக்கம்', sub: 'இன்றைய விலைகள் புதுப்பிக்கப்பட்டுள்ளன', tts: 'உங்கள் மொத்த மதிப்பிடப்பட்ட வருவாய்' },
+  { code: 'te-IN', label: 'TE', greeting: 'నమస్కారం', sub: 'నేటి ధరలు నవీకరించబడ్డాయి', tts: 'మీ మొత్తం అంచనా ఆదాయం' },
+  { code: 'kn-IN', label: 'KN', greeting: 'ನಮಸ್ಕಾರ', sub: 'ಇಂದಿನ ಬೆಲೆಗಳನ್ನು ನವೀಕರಿಸಲಾಗಿದೆ', tts: 'ನಿಮ್ಮ ಒಟ್ಟು ಅಂದಾಜು ಗಳಿಕೆ' },
+  { code: 'en-US', label: 'EN', greeting: 'Hello', sub: "Today's prices are updated", tts: 'Your total estimated earnings are' },
 ];
+
+function StatusBadge({ lot }: { lot: Lot }) {
+  switch (lot.status) {
+    case 'PENDING':    return <span className="badge badge-neutral">Logged</span>;
+    case 'REQUESTED':  return <span className="badge badge-warning"><Clock size={10}/>Hub Reviewing</span>;
+    case 'ACCEPTED':   return <span className="badge badge-active"><Building2 size={10}/>Accepted</span>;
+    case 'RECEIVED':   return <span className="badge badge-active"><Scale size={10}/>At Hub</span>;
+    case 'AWAITING_COLLECTOR_CONFIRMATION':
+      return <span className="badge" style={{background:'#fef3c7',color:'#92400e',animation:'pulse 1.5s infinite'}}>⚠ Confirm Weight</span>;
+    case 'PURCHASE_CONFIRMED': return <span className="badge badge-active">Price Agreed</span>;
+    case 'PAYMENT_PENDING':    return <span className="badge badge-warning">Payment Pending</span>;
+    case 'PAID':       return <span className="badge badge-success"><CheckCircle2 size={10}/>Paid</span>;
+    case 'COMPLETED':  return <span className="badge badge-success">Recycled</span>;
+    case 'REJECTED':   return <span className="badge badge-error">Rejected</span>;
+    default:           return null;
+  }
+}
 
 export default function HomePage() {
   const navigate = useNavigate();
   const [langIndex, setLangIndex] = useState(0);
-  
-  // Profile state
   const liveProfile = useLiveQuery(() => db.profile.get('current-user'));
   const [profile, setProfile] = useState<CollectorProfile>(DEFAULT_PROFILE);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editForm, setEditForm] = useState<CollectorProfile>(DEFAULT_PROFILE);
-
-  // Hub Modal for lot assignment
   const [hubSelectLot, setHubSelectLot] = useState<Lot | null>(null);
   const [chosenHubId, setChosenHubId] = useState<string>(DEMO_HUBS[0].id);
-
-  // Confirmation Modal for weigh-in review
   const [confirmingLot, setConfirmingLot] = useState<Lot | null>(null);
-
-  // Receipt Modal
   const [receiptLotId, setReceiptLotId] = useState<string | null>(null);
-
-  // Tabs for collector lots
   const [lotTab, setLotTab] = useState<'ACTIVE' | 'HISTORY'>('ACTIVE');
 
   useEffect(() => {
-    if (liveProfile) {
-      setProfile(liveProfile);
-      setEditForm(liveProfile);
-    } else {
-      getCollectorProfile().then(p => {
-        setProfile(p);
-        setEditForm(p);
-      });
-    }
+    if (liveProfile) { setProfile(liveProfile); setEditForm(liveProfile); }
+    else { getCollectorProfile().then(p => { setProfile(p); setEditForm(p); }); }
   }, [liveProfile]);
 
-  const allLots = useLiveQuery(() => db.lots.reverse().sortBy('createdAt'), []) || [];
+  const allLots = useLiveQuery(() => db.lots.reverse().sortBy('timestamp'), []) || [];
   const hubs = useLiveQuery(() => db.hubs.toArray()) || DEMO_HUBS;
 
-  const activeLots = allLots.filter(l => 
-    !['COMPLETED', 'REJECTED'].includes(l.status)
-  );
-
-  const completedLots = allLots.filter(l => 
-    ['COMPLETED', 'PAID', 'REJECTED'].includes(l.status)
-  );
-
-  const expectedEarnings = activeLots.reduce((acc, lot) => {
-    return acc + (lot.purchaseAmount || lot.estimate || 0);
-  }, 0);
-  
-  // Calculate lifetime stats for gamification
-  const lifetimeWeightKg = allLots
-    .filter(l => l.status === 'COMPLETED' || l.status === 'PAID')
-    .reduce((acc, lot) => acc + (lot.actualWeight || parseFloat(lot.weight) || 0), 0);
+  const activeLots = allLots.filter(l => !['COMPLETED', 'REJECTED', 'CANCELLED'].includes(l.status));
+  const completedLots = allLots.filter(l => ['COMPLETED', 'PAID', 'REJECTED'].includes(l.status));
+  const expectedEarnings = activeLots.reduce((acc, l) => acc + (l.purchaseAmount || l.estimate || 0), 0);
+  const lifetimeWeightKg = allLots.filter(l => ['COMPLETED', 'PAID'].includes(l.status))
+    .reduce((acc, l) => acc + (l.actualWeight || parseFloat(l.weight) || 0), 0);
   const carbonSavedKg = (lifetimeWeightKg * 1.44).toFixed(1);
-  
-  // Determine Tier
-  let tier = { name: "Bronze Collector", color: "text-amber-600", bg: "bg-amber-100" };
-  if (lifetimeWeightKg > 500) tier = { name: "Gold Collector", color: "text-yellow-600", bg: "bg-yellow-100" };
-  else if (lifetimeWeightKg > 100) tier = { name: "Silver Collector", color: "text-gray-500", bg: "bg-gray-100" };
+
+  let tier = { name: 'Bronze Collector', icon: '🥉', color: '#b45309' };
+  if (lifetimeWeightKg > 500) tier = { name: 'Gold Collector', icon: '🥇', color: '#ca8a04' };
+  else if (lifetimeWeightKg > 100) tier = { name: 'Silver Collector', icon: '🥈', color: '#64748b' };
 
   const currentLang = LANGUAGES[langIndex];
-
   const speakText = () => {
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
-      const text = `${currentLang.tts} ${expectedEarnings} ${langIndex === 5 ? 'rupees' : 'रुपये'}`;
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = currentLang.code;
-      window.speechSynthesis.speak(utterance);
+      const utt = new SpeechSynthesisUtterance(`${currentLang.tts} ${expectedEarnings} ${langIndex === 5 ? 'rupees' : 'रुपये'}`);
+      utt.lang = currentLang.code;
+      window.speechSynthesis.speak(utt);
     }
-  };
-
-  const toggleLanguage = () => {
-    setLangIndex((prev) => (prev + 1) % LANGUAGES.length);
   };
 
   const handleSaveProfile = async (e: React.FormEvent) => {
@@ -134,532 +95,350 @@ export default function HomePage() {
 
   const handleSendToHub = async () => {
     if (!hubSelectLot) return;
-    try {
-      await requestLotPurchase(hubSelectLot.id, chosenHubId);
-      setHubSelectLot(null);
-    } catch (err: any) {
-      alert(err.message || 'Failed to send lot to hub.');
-    }
+    try { await requestLotPurchase(hubSelectLot.id, chosenHubId); setHubSelectLot(null); }
+    catch (err: any) { alert(err.message || 'Failed to send lot to hub.'); }
   };
 
   const handleConfirmLotPrice = async (lotId: string) => {
-    try {
-      await confirmLotPurchaseByCollector(lotId);
-      setConfirmingLot(null);
-    } catch (err: any) {
-      alert(err.message || 'Failed to confirm price.');
-    }
-  };
-
-  const renderStatusBadge = (lot: Lot) => {
-    switch (lot.status) {
-      case 'PENDING':
-        return <span className="text-[10px] bg-gray-100 text-gray-700 font-bold px-2 py-0.5 rounded-full">Logged</span>;
-      case 'REQUESTED':
-        return <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full flex items-center"><Clock size={10} className="mr-1" /> Hub Reviewing</span>;
-      case 'ACCEPTED':
-        return <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-full flex items-center"><Building2 size={10} className="mr-1" /> Accepted at Hub</span>;
-      case 'RECEIVED':
-        return <span className="text-[10px] bg-purple-100 text-purple-800 font-bold px-2 py-0.5 rounded-full flex items-center"><Scale size={10} className="mr-1" /> Hub Weigh-in</span>;
-      case 'AWAITING_COLLECTOR_CONFIRMATION':
-        return <span className="text-[10px] bg-amber-400 text-amber-950 font-black px-2 py-0.5 rounded-full animate-pulse flex items-center">Action Required! Confirm Weight</span>;
-      case 'PURCHASE_CONFIRMED':
-        return <span className="text-[10px] bg-indigo-100 text-indigo-800 font-bold px-2 py-0.5 rounded-full">Price Agreed</span>;
-      case 'PAYMENT_PENDING':
-        return <span className="text-[10px] bg-yellow-100 text-yellow-800 font-bold px-2 py-0.5 rounded-full">Payment Processing</span>;
-      case 'PAID':
-        return <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full flex items-center"><CheckCircle2 size={10} className="mr-1 text-emerald-600" /> Paid & Settled</span>;
-      case 'COMPLETED':
-        return <span className="text-[10px] bg-green-100 text-green-800 font-bold px-2 py-0.5 rounded-full">Recycled</span>;
-      case 'REJECTED':
-        return <span className="text-[10px] bg-red-100 text-red-800 font-bold px-2 py-0.5 rounded-full">Hub Rejected</span>;
-      default:
-        return null;
-    }
+    try { await confirmLotPurchaseByCollector(lotId); setConfirmingLot(null); }
+    catch (err: any) { alert(err.message || 'Failed to confirm price.'); }
   };
 
   return (
-    <div className="p-4 max-w-md mx-auto pb-28 text-[#14213D]">
-      {/* Top Header & Language Bar */}
-      <div className="flex justify-between items-center mb-4">
+    <div className="max-w-2xl mx-auto px-4 py-5 space-y-5">
+
+      {/* ─── Greeting Bar ─────────────────────────────── */}
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-black text-[#14213D]">{currentLang.greeting}</h1>
-          <p className="text-gray-500 text-xs">{currentLang.sub}</p>
+          <p className="text-2xl font-black text-[#1f2937]">{currentLang.greeting}, {profile.name.split(' ')[0]}</p>
+          <p className="text-sm text-[#64748b] mt-0.5">{currentLang.sub}</p>
         </div>
-        <div className="flex items-center space-x-2">
-          <button 
-            onClick={speakText}
-            title="Read summary out loud"
-            className="p-2 bg-blue-100 text-blue-600 rounded-full active:scale-95 transition-transform"
-          >
-            <Volume2 size={18} />
+        <div className="flex items-center gap-2">
+          <button onClick={speakText} title="Read summary aloud"
+            className="p-2 rounded-xl bg-[#dcfce7] text-[#166534] hover:bg-green-200 transition">
+            <Volume2 size={17}/>
           </button>
-          <button 
-            onClick={toggleLanguage}
-            title="Switch Language"
-            className="bg-[#FFC72C] p-2 rounded-full shadow-sm active:scale-95 transition-transform w-9 h-9 flex items-center justify-center"
-          >
-            <span className="font-bold text-xs uppercase text-[#14213D]">{currentLang.label}</span>
+          <button onClick={() => setLangIndex(i => (i+1) % LANGUAGES.length)} title="Switch language"
+            className="w-9 h-9 rounded-xl bg-[#166534] text-white flex items-center justify-center text-[11px] font-bold transition hover:bg-[#14532d]">
+            {currentLang.label}
           </button>
         </div>
       </div>
 
-      {/* Persistent Collector Profile Card (Demo Profile) */}
-      <div className="bg-white rounded-2xl p-4 mb-4 shadow-sm border border-gray-100 relative overflow-hidden">
-        <div className="flex justify-between items-start mb-2">
-          <div className="flex items-center">
-            <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center font-bold mr-3 border border-blue-100">
-              <User size={20} />
+      {/* ─── Stats Row ───────────────────────────────── */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="stat-card">
+          <div className="flex items-center gap-1.5 text-[#64748b] mb-2">
+            <Wallet size={14}/><span className="stat-card-label" style={{marginTop:0}}>Est. Earnings</span>
+          </div>
+          <p className="stat-card-value text-[#166534]">₹{expectedEarnings.toLocaleString('en-IN')}</p>
+          <p className="text-[11px] text-[#64748b] mt-1">{activeLots.length} active lots</p>
+        </div>
+        <div className="stat-card">
+          <div className="flex items-center gap-1.5 text-[#64748b] mb-2">
+            <Leaf size={14} color="#166534"/><span className="stat-card-label" style={{marginTop:0}}>CO₂ Saved</span>
+          </div>
+          <p className="stat-card-value text-[#166534]">{carbonSavedKg}<span className="text-base font-normal"> kg</span></p>
+          <p className="text-[11px] text-[#64748b] mt-1">lifetime estimate</p>
+        </div>
+      </div>
+
+      {/* ─── Profile Card ────────────────────────────── */}
+      <div className="kc-card p-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-[#dcfce7] flex items-center justify-center flex-shrink-0">
+            <User size={20} color="#166534"/>
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="font-bold text-[#1f2937] text-sm truncate">{profile.name}</p>
+              <span className="badge badge-neutral font-mono">{profile.collectorId}</span>
+              <span className="text-sm">{tier.icon}</span>
+              <span className="text-[11px] font-semibold" style={{color: tier.color}}>{tier.name}</span>
             </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <h2 className="font-bold text-sm text-[#14213D]">{profile.name}</h2>
-                <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-mono font-bold">
-                  {profile.collectorId}
-                </span>
+            <p className="text-xs text-[#64748b] flex items-center gap-1 mt-0.5 truncate">
+              <MapPin size={11}/>{profile.location}
+            </p>
+          </div>
+          <button onClick={() => setIsEditModalOpen(true)}
+            className="p-2 rounded-lg hover:bg-gray-100 transition flex-shrink-0" title="Edit profile">
+            <Edit3 size={15} color="#64748b"/>
+          </button>
+        </div>
+      </div>
+
+      {/* ─── Add New Lot CTA ─────────────────────────── */}
+      <button onClick={() => navigate('/new')}
+        className="w-full btn-primary py-3.5 text-base rounded-xl gap-2">
+        <PlusCircle size={20}/>
+        Log New Scrap Lot
+      </button>
+
+      {/* ─── Lots Tabs ───────────────────────────────── */}
+      <div>
+        <div className="flex gap-2 mb-3">
+          {(['ACTIVE', 'HISTORY'] as const).map(tab => (
+            <button key={tab} onClick={() => setLotTab(tab)}
+              className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
+                lotTab === tab
+                  ? 'bg-[#166534] text-white'
+                  : 'bg-white border border-[#e2e8f0] text-[#64748b] hover:border-[#166534] hover:text-[#166534]'
+              }`}>
+              {tab === 'ACTIVE' ? `Active (${activeLots.length})` : `History (${completedLots.length})`}
+            </button>
+          ))}
+        </div>
+
+        {/* Active Lots */}
+        {lotTab === 'ACTIVE' && (
+          <div className="space-y-3">
+            {activeLots.length === 0 ? (
+              <div className="kc-card p-10 flex flex-col items-center text-center gap-3">
+                <Package size={36} color="#cbd5e1"/>
+                <p className="font-semibold text-[#64748b]">No active scrap loads</p>
+                <p className="text-sm text-[#94a3b8]">Tap "Log New Scrap Lot" above to get started.</p>
               </div>
-              <p className="text-[11px] text-gray-500 flex items-center mt-0.5">
-                <MapPin size={11} className="mr-1 text-gray-400" /> {profile.location}
-              </p>
-            </div>
-          </div>
-          <button 
-            onClick={() => setIsEditModalOpen(true)}
-            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition"
-            title="Edit Collector Demo Profile"
-          >
-            <Edit3 size={15} />
-          </button>
-        </div>
-        <div className="flex justify-between items-center pt-2 border-t border-gray-50 text-[10px] text-gray-400 font-mono">
-          <span>Local Demo Profile (Offline Storage)</span>
-          <span className="text-emerald-600 font-bold">● Active Session</span>
-        </div>
-      </div>
+            ) : (
+              activeLots.map(lot => {
+                const displayWeight = typeof lot.actualWeight === 'number' && lot.actualWeight > 0 ? lot.actualWeight : parseFloat(lot.weight);
+                const displayPrice = lot.purchaseAmount || lot.estimate;
+                const needsAction = lot.status === 'AWAITING_COLLECTOR_CONFIRMATION';
 
-      {/* Gamification / Tier Badge */}
-      <div className={`flex items-center p-3 rounded-2xl mb-4 shadow-sm border border-gray-100 ${tier.bg}`}>
-        <Trophy size={22} className={`mr-2.5 ${tier.color}`} />
-        <div>
-          <p className={`font-bold text-xs ${tier.color}`}>Level: {tier.name}</p>
-          <p className="text-[11px] text-gray-700 font-medium">Lifetime Recycled: {lifetimeWeightKg.toFixed(1)} kg</p>
-        </div>
-      </div>
+                return (
+                  <div key={lot.id} className={`kc-card overflow-hidden ${needsAction ? 'border-amber-300' : ''}`}>
+                    {needsAction && (
+                      <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center gap-2">
+                        <AlertTriangle size={14} color="#b45309"/>
+                        <p className="text-xs font-bold text-amber-800">Action required — confirm hub weigh-in</p>
+                      </div>
+                    )}
+                    <div className="p-4">
+                      <div className="flex items-start gap-3">
+                        {lot.photo ? (
+                          <img src={lot.photo} alt={lot.material}
+                            className="w-14 h-14 rounded-xl object-cover border border-[#e2e8f0] flex-shrink-0"/>
+                        ) : (
+                          <div className="w-14 h-14 rounded-xl bg-[#f0fdf4] flex items-center justify-center flex-shrink-0 border border-[#e2e8f0]">
+                            <Package size={22} color="#166534"/>
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="font-bold text-[#1f2937] text-sm">{lot.material}</p>
+                          <p className="text-xs text-[#64748b]">{displayWeight.toFixed(2)} kg • {lot.condition || 'Mixed Scrap'}</p>
+                          <div className="mt-1.5"><StatusBadge lot={lot}/></div>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <p className="font-black text-[#166534] text-base">₹{displayPrice.toLocaleString('en-IN')}</p>
+                          <p className="text-[10px] text-[#94a3b8] font-mono mt-0.5">#{lot.id.slice(0,6)}</p>
+                        </div>
+                      </div>
 
-      {/* Stats row */}
-      <div className="grid grid-cols-2 gap-3 mb-5">
-        <div className="bg-white rounded-2xl p-3.5 shadow-sm border border-gray-100">
-          <div className="flex items-center text-gray-500 mb-1">
-            <Wallet size={14} className="mr-1.5" />
-            <span className="font-semibold text-xs">Estimated Value</span>
-          </div>
-          <div className="text-xl font-black text-green-600">
-            ₹{expectedEarnings.toLocaleString('en-IN')}
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl p-3.5 shadow-sm border border-gray-100">
-          <div className="flex items-center text-gray-500 mb-1">
-            <Leaf size={14} className="mr-1.5 text-emerald-500" />
-            <span className="font-semibold text-xs">CO₂ Saved</span>
-          </div>
-          <div className="text-xl font-black text-emerald-600">
-            {carbonSavedKg} <span className="text-xs font-normal">kg</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Lots Header & Switcher */}
-      <div className="flex justify-between items-center mb-3">
-        <div className="flex space-x-2">
-          <button
-            onClick={() => setLotTab('ACTIVE')}
-            className={`text-xs font-bold px-3 py-1.5 rounded-xl transition ${
-              lotTab === 'ACTIVE' 
-                ? 'bg-[#14213D] text-white shadow-sm' 
-                : 'bg-gray-100 text-gray-600 hover:text-black'
-            }`}
-          >
-            Active Scrap ({activeLots.length})
-          </button>
-          <button
-            onClick={() => setLotTab('HISTORY')}
-            className={`text-xs font-bold px-3 py-1.5 rounded-xl transition ${
-              lotTab === 'HISTORY' 
-                ? 'bg-[#14213D] text-white shadow-sm' 
-                : 'bg-gray-100 text-gray-600 hover:text-black'
-            }`}
-          >
-            History & Paid ({completedLots.length})
-          </button>
-        </div>
-
-        <button 
-          onClick={() => navigate('/new')}
-          className="text-xs text-blue-600 font-bold hover:underline flex items-center"
-        >
-          + Add New
-        </button>
-      </div>
-
-      {/* Display Lots */}
-      {lotTab === 'ACTIVE' && (
-        <div className="space-y-3">
-          {activeLots.length === 0 ? (
-            <div className="bg-white p-8 rounded-2xl text-center text-gray-400 border border-dashed border-gray-300">
-              <Package className="mx-auto mb-2 text-gray-300" size={32} />
-              <p className="font-medium text-sm text-gray-500">No active scrap loads.</p>
-              <p className="text-xs mt-1">Tap "+ Add New" to log collected electronic scrap.</p>
-            </div>
-          ) : (
-            activeLots.map(lot => {
-              const displayWeight = typeof lot.actualWeight === 'number' && lot.actualWeight > 0 
-                ? lot.actualWeight 
-                : parseFloat(lot.weight);
-              const displayPrice = lot.purchaseAmount || lot.estimate;
-
-              return (
-                <div key={lot.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      {lot.photo ? (
-                        <img 
-                          src={lot.photo} 
-                          alt={lot.material} 
-                          className="w-12 h-12 rounded-xl object-cover border border-gray-200 flex-shrink-0 shadow-sm"
-                        />
-                      ) : (
-                        <div className="w-12 h-12 rounded-xl bg-gray-100 text-gray-400 flex items-center justify-center font-bold text-xs flex-shrink-0 border border-gray-200">
-                          No Pic
+                      {/* Action banner for AWAITING_COLLECTOR_CONFIRMATION */}
+                      {needsAction && (
+                        <div className="mt-3 p-3 bg-amber-50 rounded-xl border border-amber-200 space-y-2">
+                          <p className="text-xs text-amber-900">
+                            Hub scale: <strong>{lot.actualWeight} kg</strong> (estimate: {lot.weight} kg) •
+                            Net payout: <strong className="text-[#166534]">₹{lot.purchaseAmount}</strong>
+                          </p>
+                          <button onClick={() => setConfirmingLot(lot)}
+                            className="w-full py-2.5 bg-[#166534] text-white text-xs font-bold rounded-lg hover:bg-[#14532d] transition">
+                            Review & Confirm Agreed Amount
+                          </button>
                         </div>
                       )}
-                      
-                      <div>
-                        <p className="font-bold text-sm text-[#14213D]">{lot.material}</p>
-                        <p className="text-xs text-gray-500 font-medium">
-                          {displayWeight.toFixed(2)} kg • {lot.condition || 'Mixed Scrap'}
-                        </p>
-                      </div>
-                    </div>
 
-                    <div className="text-right">
-                      <p className="font-black text-green-700 text-sm">₹{displayPrice.toLocaleString('en-IN')}</p>
-                      <div className="mt-1">{renderStatusBadge(lot)}</div>
-                    </div>
-                  </div>
-
-                  {/* If Awaiting Confirmation, show prominent banner */}
-                  {lot.status === 'AWAITING_COLLECTOR_CONFIRMATION' && (
-                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-2">
-                      <div className="flex items-start text-amber-900 text-xs">
-                        <Scale size={16} className="mr-2 text-amber-600 flex-shrink-0 mt-0.5" />
-                        <div>
-                          <p className="font-bold">Hub Weigh-in Completed!</p>
-                          <p className="text-[11px] text-amber-800">
-                            Estimated: {lot.weight} kg → Actual scale weight: <strong>{lot.actualWeight} kg</strong>.
-                            Net payout offered: <strong>₹{lot.purchaseAmount}</strong>.
-                          </p>
+                      {/* Actions for PENDING */}
+                      {lot.status === 'PENDING' && (
+                        <div className="mt-3 grid grid-cols-2 gap-2">
+                          <button onClick={() => { setHubSelectLot(lot); setChosenHubId(DEMO_HUBS[0].id); }}
+                            className="py-2 bg-[#f0fdf4] border border-[#dcfce7] text-[#166534] text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 hover:bg-[#dcfce7] transition">
+                            <Building2 size={13}/>Send to Hub
+                          </button>
+                          <button onClick={() => navigate(`/handover/${lot.id}`)}
+                            className="py-2 bg-[#166534] text-white text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 hover:bg-[#14532d] transition">
+                            Direct Handover<ChevronRight size={13}/>
+                          </button>
                         </div>
-                      </div>
-                      <button
-                        onClick={() => setConfirmingLot(lot)}
-                        className="w-full py-2 bg-[#FFC72C] text-[#14213D] font-black text-xs rounded-lg hover:bg-yellow-400 shadow-sm transition active:scale-95"
-                      >
-                        Review & Confirm Agreed Amount
-                      </button>
+                      )}
+
+                      {/* View receipt for PAID */}
+                      {lot.status === 'PAID' && (
+                        <button onClick={() => setReceiptLotId(lot.id)}
+                          className="mt-3 w-full py-2 bg-[#f0fdf4] border border-[#dcfce7] text-[#166534] text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 hover:bg-[#dcfce7] transition">
+                          <Receipt size={13}/>View Payment Receipt
+                        </button>
+                      )}
+
+                      {/* Hub info for in-progress */}
+                      {['REQUESTED','ACCEPTED','RECEIVED','PURCHASE_CONFIRMED','PAYMENT_PENDING'].includes(lot.status) && (
+                        <p className="mt-2 text-[11px] text-[#64748b] text-center font-mono">
+                          Hub: {hubs.find(h => h.id === lot.hubId)?.name || 'Bengaluru East Scrap & E-Waste Godown'}
+                        </p>
+                      )}
                     </div>
-                  )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
 
-                  {/* Actions for other statuses */}
-                  <div className="flex items-center space-x-2 pt-1 border-t border-gray-50">
-                    {lot.status === 'PENDING' && (
-                      <>
-                        <button 
-                          onClick={() => {
-                            setHubSelectLot(lot);
-                          }}
-                          className="flex-1 py-2 bg-blue-50 text-blue-800 rounded-xl text-xs font-bold hover:bg-blue-100 transition flex items-center justify-center"
-                        >
-                          <Building2 size={13} className="mr-1 text-blue-600" /> Send to Hub
-                        </button>
-                        <button 
-                          onClick={() => navigate(`/handover/${lot.id}`)}
-                          className="flex-1 py-2 bg-[#14213D] text-white rounded-xl text-xs font-bold hover:bg-blue-900 transition flex items-center justify-center"
-                        >
-                          Direct Handover <ArrowRight size={12} className="ml-1" />
-                        </button>
-                      </>
-                    )}
-
+        {/* History Tab */}
+        {lotTab === 'HISTORY' && (
+          <div className="space-y-2">
+            {completedLots.length === 0 ? (
+              <div className="kc-card p-10 flex flex-col items-center text-center gap-3">
+                <CheckCircle2 size={36} color="#cbd5e1"/>
+                <p className="font-semibold text-[#64748b]">No completed transactions yet.</p>
+              </div>
+            ) : (
+              completedLots.map(lot => (
+                <div key={lot.id} className="kc-card p-4 flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-semibold text-sm text-[#1f2937]">{lot.material}</p>
+                      <StatusBadge lot={lot}/>
+                    </div>
+                    <p className="text-xs text-[#64748b] mt-0.5">
+                      {(lot.actualWeight || parseFloat(lot.weight)).toFixed(2)} kg •
+                      {new Date(lot.timestamp).toLocaleDateString('en-IN')} •
+                      #{lot.id.slice(0,6)}
+                    </p>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className="font-black text-[#166534] text-sm">₹{(lot.purchaseAmount || lot.estimate).toLocaleString('en-IN')}</p>
                     {lot.status === 'PAID' && (
-                      <button
-                        onClick={() => setReceiptLotId(lot.id)}
-                        className="w-full py-2 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold hover:bg-emerald-100 transition flex items-center justify-center"
-                      >
-                        <Receipt size={14} className="mr-1.5 text-emerald-600" /> View Official Cash Receipt
+                      <button onClick={() => setReceiptLotId(lot.id)}
+                        className="text-[11px] text-[#166534] font-bold flex items-center gap-1 mt-1 hover:underline">
+                        <Receipt size={11}/>Receipt
                       </button>
                     )}
-
-                    {['REQUESTED', 'ACCEPTED', 'RECEIVED', 'PURCHASE_CONFIRMED', 'PAYMENT_PENDING'].includes(lot.status) && (
-                      <div className="w-full text-center text-[11px] text-gray-500 font-mono py-1">
-                        Hub Location: {hubs.find(h => h.id === lot.hubId)?.name || 'Hebbal Aggregation Hub'}
-                      </div>
-                    )}
                   </div>
                 </div>
-              );
-            })
-          )}
-        </div>
-      )}
+              ))
+            )}
+          </div>
+        )}
+      </div>
 
-      {/* History & Settled Lots */}
-      {lotTab === 'HISTORY' && (
-        <div className="space-y-3">
-          {completedLots.length === 0 ? (
-            <div className="bg-white p-8 rounded-2xl text-center text-gray-400 border border-dashed border-gray-300">
-              <CheckCircle2 className="mx-auto mb-2 text-gray-300" size={32} />
-              <p className="font-medium text-sm text-gray-500">No settled transactions yet.</p>
-            </div>
-          ) : (
-            completedLots.map(lot => (
-              <div key={lot.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between">
-                <div>
-                  <div className="flex items-center space-x-2">
-                    <p className="font-bold text-sm text-[#14213D]">{lot.material}</p>
-                    {renderStatusBadge(lot)}
-                  </div>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    Weight: {lot.actualWeight || lot.weight} kg
-                  </p>
-                  <p className="text-[10px] text-gray-400 font-mono mt-0.5">
-                    {new Date(lot.timestamp).toLocaleDateString()} • ID #{lot.id.slice(0, 6)}
-                  </p>
-                </div>
-
-                <div className="text-right">
-                  <p className="font-black text-green-700 text-sm">₹{(lot.purchaseAmount || lot.estimate).toLocaleString('en-IN')}</p>
-                  {lot.status === 'PAID' && (
-                    <button
-                      onClick={() => setReceiptLotId(lot.id)}
-                      className="mt-1.5 text-[11px] text-blue-600 font-bold hover:underline flex items-center justify-end"
-                    >
-                      <Receipt size={12} className="mr-1" /> Receipt
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      )}
-
-      {/* MODAL: Select Aggregation Hub */}
+      {/* ─── MODAL: Hub Select ─────────────────────── */}
       {hubSelectLot && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-5 w-full max-w-sm shadow-2xl space-y-4">
-            <div className="flex justify-between items-center border-b border-gray-100 pb-2">
+        <div className="modal-overlay" onClick={() => setHubSelectLot(null)}>
+          <div className="modal-panel p-5 space-y-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-black text-base text-[#14213D]">Send Lot to Hub</h3>
-                <p className="text-[11px] text-gray-500">Select participating aggregation godown</p>
+                <h3 className="font-black text-[#1f2937]">Send Lot to Hub</h3>
+                <p className="text-xs text-[#64748b] mt-0.5">Select an aggregation godown</p>
               </div>
-              <button onClick={() => setHubSelectLot(null)} className="p-1 text-gray-400 hover:text-gray-600">
-                <X size={18} />
+              <button onClick={() => setHubSelectLot(null)} className="p-1.5 rounded-lg hover:bg-gray-100">
+                <X size={18} color="#64748b"/>
               </button>
             </div>
-
-            <div className="bg-gray-50 p-3 rounded-xl text-xs space-y-1">
-              <div className="flex justify-between font-bold text-gray-700">
-                <span>Material:</span>
-                <span>{hubSelectLot.material}</span>
-              </div>
-              <div className="flex justify-between text-gray-600">
-                <span>Estimated Weight:</span>
-                <span>{hubSelectLot.weight} kg</span>
-              </div>
-              <div className="flex justify-between font-bold text-green-700">
-                <span>Estimated Payout:</span>
-                <span>₹{hubSelectLot.estimate.toLocaleString('en-IN')}</span>
-              </div>
+            <div className="bg-[#f0fdf4] border border-[#dcfce7] rounded-xl p-3 text-sm space-y-1">
+              <div className="flex justify-between"><span className="text-[#64748b]">Material:</span><span className="font-semibold">{hubSelectLot.material}</span></div>
+              <div className="flex justify-between"><span className="text-[#64748b]">Est. Weight:</span><span className="font-semibold">{hubSelectLot.weight} kg</span></div>
+              <div className="flex justify-between"><span className="text-[#64748b]">Est. Value:</span><span className="font-bold text-[#166534]">₹{hubSelectLot.estimate.toLocaleString('en-IN')}</span></div>
             </div>
-
             <div className="space-y-2">
-              <label className="block text-xs font-bold text-gray-700">Select Collection Hub</label>
+              <label className="text-xs font-bold text-[#1f2937]">Select Hub</label>
               {hubs.map(h => (
-                <div
-                  key={h.id}
-                  onClick={() => setChosenHubId(h.id)}
+                <div key={h.id} onClick={() => setChosenHubId(h.id)}
                   className={`p-3 rounded-xl border-2 cursor-pointer transition ${
-                    chosenHubId === h.id ? 'border-blue-600 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <p className="font-bold text-xs text-[#14213D]">{h.name}</p>
-                  <p className="text-[10px] text-gray-500">{h.location}</p>
+                    chosenHubId === h.id ? 'border-[#166534] bg-[#f0fdf4]' : 'border-[#e2e8f0] hover:border-[#166534]/50'
+                  }`}>
+                  <p className="font-bold text-sm text-[#1f2937]">{h.name}</p>
+                  <p className="text-xs text-[#64748b]">{h.location}</p>
                 </div>
               ))}
             </div>
-
-            <div className="flex space-x-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setHubSelectLot(null)}
-                className="w-1/2 py-2.5 rounded-xl font-bold text-xs bg-gray-100 text-gray-700 hover:bg-gray-200"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSendToHub}
-                className="w-1/2 py-2.5 rounded-xl font-bold text-xs bg-[#14213D] text-white hover:bg-blue-900 shadow"
-              >
-                Submit Request
-              </button>
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button onClick={() => setHubSelectLot(null)} className="btn-secondary py-3">Cancel</button>
+              <button onClick={handleSendToHub} className="btn-primary py-3">Submit Request</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* MODAL: Collector Reviews & Confirms Hub Weigh-in */}
+      {/* ─── MODAL: Confirm Weight ─────────────────── */}
       {confirmingLot && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-5 w-full max-w-sm shadow-2xl space-y-4">
-            <div className="border-b border-gray-100 pb-2">
-              <div className="flex items-center text-xs font-bold text-amber-700 mb-1">
-                <Scale size={14} className="mr-1" /> Hub Scale Weight Verification
-              </div>
-              <h3 className="font-black text-lg text-[#14213D]">Confirm Agreed Price</h3>
-              <p className="text-xs text-gray-500">Lot #{confirmingLot.id.slice(0, 6)} • {confirmingLot.material}</p>
-            </div>
-
-            <div className="bg-gray-50 rounded-2xl p-3 text-xs font-mono space-y-2 border border-gray-100">
-              <div className="flex justify-between text-gray-500">
-                <span>Collector Initial Estimate:</span>
-                <span>{confirmingLot.weight} kg</span>
-              </div>
-              <div className="flex justify-between text-blue-900 font-bold text-sm">
-                <span>Hub Scale Verified Weight:</span>
-                <span>{confirmingLot.actualWeight} kg</span>
-              </div>
-              <div className="border-t border-gray-200 pt-1.5 flex justify-between font-bold text-green-700 text-base">
-                <span>Final Payable Amount:</span>
-                <span>₹{confirmingLot.purchaseAmount}</span>
+        <div className="modal-overlay" onClick={() => setConfirmingLot(null)}>
+          <div className="modal-panel p-5 space-y-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <Scale size={15} color="#b45309"/>
+                  <span className="text-xs font-bold text-amber-700">Hub Scale Verification</span>
+                </div>
+                <h3 className="font-black text-[#1f2937]">Confirm Agreed Price</h3>
+                <p className="text-xs text-[#64748b]">Lot #{confirmingLot.id.slice(0,6)} • {confirmingLot.material}</p>
               </div>
             </div>
-
-            <div className="text-[11px] text-gray-600 bg-blue-50 p-2.5 rounded-xl border border-blue-100">
-              By confirming, you agree to this net weight and payout. The Hub manager will immediately disburse your cash or UPI payment.
+            <div className="bg-[#f8fafc] border border-[#e2e8f0] rounded-xl p-4 space-y-2 font-mono text-sm">
+              <div className="flex justify-between text-[#64748b]">
+                <span>Your estimate:</span><span>{confirmingLot.weight} kg</span>
+              </div>
+              <div className="flex justify-between font-bold text-[#1f2937]">
+                <span>Hub scale:</span><span>{confirmingLot.actualWeight} kg</span>
+              </div>
+              <div className="flex justify-between pt-2 border-t border-[#e2e8f0] text-[#166534] font-black text-base">
+                <span>Final Payout:</span><span>₹{confirmingLot.purchaseAmount?.toLocaleString('en-IN')}</span>
+              </div>
             </div>
-
-            <div className="flex space-x-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setConfirmingLot(null)}
-                className="w-1/2 py-2.5 rounded-xl font-bold text-xs bg-gray-100 text-gray-700 hover:bg-gray-200"
-              >
-                Hold / Dispute
-              </button>
-              <button
-                type="button"
-                onClick={() => handleConfirmLotPrice(confirmingLot.id)}
-                className="w-1/2 py-2.5 rounded-xl font-bold text-xs bg-green-600 text-white hover:bg-green-700 shadow"
-              >
-                Confirm & Accept
+            <p className="text-xs text-[#64748b] bg-[#f0fdf4] p-3 rounded-xl">
+              By confirming, you agree to the hub's measured weight and payout amount.
+              Cash or UPI payment will be disbursed immediately.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={() => setConfirmingLot(null)} className="btn-secondary py-3">Hold / Dispute</button>
+              <button onClick={() => handleConfirmLotPrice(confirmingLot.id)} className="btn-primary py-3 gap-1.5">
+                <Check size={15}/>Confirm & Accept
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* RECEIPT MODAL */}
-      {receiptLotId && (
-        <PurchaseReceiptModal
-          lotId={receiptLotId}
-          onClose={() => setReceiptLotId(null)}
-        />
-      )}
+      {/* ─── Receipt Modal ─────────────────────────── */}
+      {receiptLotId && <PurchaseReceiptModal lotId={receiptLotId} onClose={() => setReceiptLotId(null)}/>}
 
-      {/* Edit Profile Modal */}
+      {/* ─── Edit Profile Modal ────────────────────── */}
       {isEditModalOpen && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl relative animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex justify-between items-center mb-4">
+        <div className="modal-overlay" onClick={() => setIsEditModalOpen(false)}>
+          <div className="modal-panel p-5 space-y-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-lg font-black text-[#14213D]">Edit Collector Profile</h3>
-                <p className="text-[11px] text-gray-500">Persistent Local Demo Identity</p>
+                <h3 className="font-black text-[#1f2937]">Edit Collector Profile</h3>
+                <p className="text-xs text-[#64748b] mt-0.5">Saved locally to your device</p>
               </div>
-              <button 
-                onClick={() => setIsEditModalOpen(false)}
-                className="p-1 rounded-full text-gray-400 hover:text-gray-600"
-              >
-                <X size={18} />
+              <button onClick={() => setIsEditModalOpen(false)} className="p-1.5 rounded-lg hover:bg-gray-100">
+                <X size={18} color="#64748b"/>
               </button>
             </div>
-
-            <form onSubmit={handleSaveProfile} className="space-y-3.5 text-xs">
-              <div>
-                <label className="block font-bold text-gray-700 mb-1">Collector Name</label>
-                <input 
-                  type="text"
-                  value={editForm.name}
-                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                  placeholder="e.g. Ramu Kabadiwala"
-                  required
-                  className="w-full p-3 rounded-xl border border-gray-300 focus:outline-none focus:border-blue-600 font-medium"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-gray-700 mb-1">Collector ID</label>
-                <input 
-                  type="text"
-                  value={editForm.collectorId}
-                  onChange={(e) => setEditForm({ ...editForm, collectorId: e.target.value })}
-                  placeholder="e.g. KAB-7842"
-                  required
-                  className="w-full p-3 rounded-xl border border-gray-300 focus:outline-none focus:border-blue-600 font-mono font-bold"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-gray-700 mb-1">Collection Area / Godown</label>
-                <input 
-                  type="text"
-                  value={editForm.location}
-                  onChange={(e) => setEditForm({ ...editForm, location: e.target.value })}
-                  placeholder="e.g. Bangalore South (Ward 152)"
-                  required
-                  className="w-full p-3 rounded-xl border border-gray-300 focus:outline-none focus:border-blue-600 font-medium"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-gray-700 mb-1">Contact Phone (Optional)</label>
-                <input 
-                  type="text"
-                  value={editForm.phone || ''}
-                  onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
-                  placeholder="e.g. +91 98450 78421"
-                  className="w-full p-3 rounded-xl border border-gray-300 focus:outline-none focus:border-blue-600 font-mono"
-                />
-              </div>
-
-              <div className="pt-2 text-[10px] text-gray-400 bg-gray-50 p-2.5 rounded-xl border border-gray-100">
-                Notice: This profile is saved to your browser's local IndexedDB database. It will persist across refreshes and be reused across all future load entries.
-              </div>
-
-              <div className="flex space-x-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsEditModalOpen(false)}
-                  className="w-1/2 py-3 rounded-xl font-bold bg-gray-100 text-gray-700 hover:bg-gray-200 transition"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="w-1/2 py-3 rounded-xl font-bold bg-[#14213D] text-white hover:bg-blue-900 transition flex items-center justify-center shadow"
-                >
-                  <Check size={14} className="mr-1 text-green-400" /> Save Profile
+            <form onSubmit={handleSaveProfile} className="space-y-3">
+              {[
+                { label: 'Collector Name', key: 'name', placeholder: 'e.g. Ramu Kabadiwala', type: 'text' },
+                { label: 'Collector ID', key: 'collectorId', placeholder: 'e.g. KAB-7842', type: 'text' },
+                { label: 'Collection Area', key: 'location', placeholder: 'e.g. Bangalore South (Ward 152)', type: 'text' },
+                { label: 'Phone (Optional)', key: 'phone', placeholder: '+91 98450 78421', type: 'tel' },
+              ].map(f => (
+                <div key={f.key}>
+                  <label className="block text-xs font-bold text-[#1f2937] mb-1.5">{f.label}</label>
+                  <input
+                    type={f.type}
+                    value={(editForm as any)[f.key] || ''}
+                    onChange={e => setEditForm({ ...editForm, [f.key]: e.target.value })}
+                    placeholder={f.placeholder}
+                    className="kc-input"
+                  />
+                </div>
+              ))}
+              <p className="text-[11px] text-[#94a3b8] bg-[#f8fafc] p-3 rounded-xl border border-[#e2e8f0]">
+                This profile is stored in your browser's IndexedDB. It persists across refreshes.
+              </p>
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button type="button" onClick={() => setIsEditModalOpen(false)} className="btn-secondary py-3">Cancel</button>
+                <button type="submit" className="btn-primary py-3 gap-1.5">
+                  <Check size={15}/>Save Profile
                 </button>
               </div>
             </form>
