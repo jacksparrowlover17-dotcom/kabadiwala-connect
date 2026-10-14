@@ -13,6 +13,11 @@ import {
   verifyHubOperationalStatus, 
   verifyRecyclerOperationalStatus 
 } from './authService';
+import { 
+  pushLotToCloud, 
+  pushHubPurchaseToCloud, 
+  pushPaymentToCloud 
+} from './supabase';
 
 /**
  * Computes canonical 64-character SHA-256 digest for an aggregated shipment manifest.
@@ -74,7 +79,9 @@ export async function requestHubPurchase(lotId: string, hubId: string): Promise<
     status: 'REQUESTED'
   });
 
-  return (await db.lots.get(lotId))!;
+  const updatedLot = (await db.lots.get(lotId))!;
+  pushLotToCloud(updatedLot).catch(() => {});
+  return updatedLot;
 }
 
 /**
@@ -95,7 +102,9 @@ export async function acceptLotRequest(lotId: string, hubId: string): Promise<Lo
     hubId
   });
 
-  return (await db.lots.get(lotId))!;
+  const updatedLot = (await db.lots.get(lotId))!;
+  pushLotToCloud(updatedLot).catch(() => {});
+  return updatedLot;
 }
 
 /**
@@ -116,7 +125,9 @@ export async function rejectLotRequest(lotId: string, hubId: string, reason: str
     rejectionReason: reason || 'Not accepted by hub'
   });
 
-  return (await db.lots.get(lotId))!;
+  const updatedLot = (await db.lots.get(lotId))!;
+  pushLotToCloud(updatedLot).catch(() => {});
+  return updatedLot;
 }
 
 /**
@@ -203,6 +214,8 @@ export async function receiveLotAtHub(
   });
 
   const updatedLot = (await db.lots.get(lotId))!;
+  pushLotToCloud(updatedLot).catch(() => {});
+  pushHubPurchaseToCloud(purchaseRecord).catch(() => {});
   return { lot: updatedLot, purchase: purchaseRecord };
 }
 
@@ -228,13 +241,17 @@ export async function confirmPurchaseAgreement(lotId: string, collectorId?: stri
       collectorConfirmedAt: Date.now(),
       updatedAt: Date.now()
     });
+    const updatedPurchase = await db.hubPurchases.get(purchase.id);
+    if (updatedPurchase) pushHubPurchaseToCloud(updatedPurchase).catch(() => {});
   }
 
   await db.lots.update(lotId, {
     status: 'PURCHASE_CONFIRMED'
   });
 
-  return (await db.lots.get(lotId))!;
+  const updatedLot = (await db.lots.get(lotId))!;
+  pushLotToCloud(updatedLot).catch(() => {});
+  return updatedLot;
 }
 
 /**
@@ -311,7 +328,13 @@ export async function recordHubPayment(params: {
       status: 'PAID',
       updatedAt: Date.now()
     });
+    const updatedPurchase = await db.hubPurchases.get(purchase.id);
+    if (updatedPurchase) pushHubPurchaseToCloud(updatedPurchase).catch(() => {});
   }
+
+  const updatedLot = await db.lots.get(params.lotId);
+  if (updatedLot) pushLotToCloud(updatedLot).catch(() => {});
+  pushPaymentToCloud(paymentRecord).catch(() => {});
 
   return paymentRecord;
 }
@@ -330,22 +353,24 @@ export async function createOutgoingShipment(params: {
     throw new Error('A shipment requires at least one participating lot.');
   }
 
-  return await db.transaction('rw', [db.lots, db.shipments, db.hubs, db.recyclers], async () => {
-    const hub = await db.hubs.get(params.hubId) || DEMO_HUBS[0];
-    const recycler = await db.recyclers.get(params.recyclerId);
-    if (!recycler) throw new Error(`Intended Recycler not found: ${params.recyclerId}`);
+  await ensureDemoData();
 
-    // Verification check for Hub and Recycler
-    const hubAuth = await verifyHubOperationalStatus(params.hubId);
-    if (!hubAuth.allowed) {
-      throw new Error(hubAuth.reason || 'Hub is not approved to create shipments.');
-    }
+  const hub = (await db.hubs.get(params.hubId)) || DEMO_HUBS[0];
+  const recycler = await db.recyclers.get(params.recyclerId);
+  if (!recycler) throw new Error(`Intended Recycler not found: ${params.recyclerId}`);
 
-    const recAuth = await verifyRecyclerOperationalStatus(params.recyclerId, params.material);
-    if (!recAuth.allowed) {
-      throw new Error(recAuth.reason || 'Selected recycler is not approved for this shipment.');
-    }
+  // Verification check for Hub and Recycler (performed outside write transaction to avoid objectStore scoping errors)
+  const hubAuth = await verifyHubOperationalStatus(params.hubId);
+  if (!hubAuth.allowed) {
+    throw new Error(hubAuth.reason || 'Hub is not approved to create shipments.');
+  }
 
+  const recAuth = await verifyRecyclerOperationalStatus(params.recyclerId, params.material);
+  if (!recAuth.allowed) {
+    throw new Error(recAuth.reason || 'Selected recycler is not approved for this shipment.');
+  }
+
+  return await db.transaction('rw', [db.lots, db.shipments, db.hubs, db.recyclers, db.businessProfiles], async () => {
     // Fetch all selected lots
     const lots = await db.lots.where('id').anyOf(params.lotIds).toArray();
     if (lots.length !== params.lotIds.length) {

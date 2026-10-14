@@ -10,10 +10,11 @@ import {
   receiveLotAtHub, recordHubPayment
 } from '../lib/hubService';
 import { PurchaseReceiptModal } from '../components/PurchaseReceiptModal';
+import { pullLotsFromCloud } from '../lib/supabase';
 import {
   Building2, Package, Scale, CheckCircle2, XCircle, Clock,
   Truck, Filter, AlertTriangle, ArrowRight,
-  User, Banknote, ChevronDown, X, AlertCircle
+  User, Banknote, ChevronDown, X, AlertCircle, RefreshCw
 } from 'lucide-react';
 
 const MATERIAL_OPTIONS = ['All Materials', 'Circuit Boards (PCB)', 'Copper Cables', 'Mobile Phones'];
@@ -67,7 +68,22 @@ export default function HubDashboardPage() {
   const [activePurchase, setActivePurchase] = useState<HubPurchase | undefined>(undefined);
   const [activePayment, setActivePayment] = useState<Payment | undefined>(undefined);
 
-  useEffect(() => { ensureDemoData(); }, []);
+  const [isSyncingCloud, setIsSyncingCloud] = useState<boolean>(false);
+
+  const doCloudSync = async () => {
+    setIsSyncingCloud(true);
+    await pullLotsFromCloud(activeHubId);
+    setIsSyncingCloud(false);
+  };
+
+  useEffect(() => {
+    ensureDemoData();
+    doCloudSync();
+    const interval = setInterval(() => {
+      pullLotsFromCloud(activeHubId);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [activeHubId]);
 
   const hubs = useLiveQuery(() => db.hubs.toArray()) || DEMO_HUBS;
   const currentHub = hubs.find(h => h.id === activeHubId) || DEMO_HUBS[0];
@@ -185,6 +201,15 @@ export default function HubDashboardPage() {
             </div>
             <p className="text-xs text-[#64748b] break-words">{currentHub.location}</p>
           </div>
+          <button
+            onClick={doCloudSync}
+            disabled={isSyncingCloud}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 text-xs font-bold hover:bg-emerald-100 transition shadow-xs flex-shrink-0"
+            title="Pull incoming scrap lots from cloud"
+          >
+            <RefreshCw size={12} className={isSyncingCloud ? 'animate-spin' : ''} />
+            <span>{isSyncingCloud ? 'Syncing...' : 'Sync Cloud'}</span>
+          </button>
         </div>
 
         {/* Hub Selector */}

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db, type LotCondition, getCollectorProfile } from '../lib/db';
+import { pushLotToCloud } from '../lib/supabase';
 import { Camera, Weight, Calculator, RefreshCw, Trash2, CheckCircle2, AlertCircle, ArrowLeft } from 'lucide-react';
 
 const CATEGORIES = [
@@ -91,7 +92,7 @@ export default function NewLotPage() {
     try {
       const est = Math.round(parsedWeight * material.rate);
       const profile = await getCollectorProfile();
-      await db.lots.add({
+      const newLot = {
         id: crypto.randomUUID(),
         material: material.name,
         weight: parsedWeight.toFixed(1),
@@ -100,9 +101,11 @@ export default function NewLotPage() {
         photo: photoDataUrl || undefined,
         collectorId: profile.collectorId || collectorId,
         collectorName: profile.name || 'Collector',
-        status: 'PENDING',
+        status: 'PENDING' as const,
         timestamp: Date.now(),
-      });
+      };
+      await db.lots.add(newLot);
+      pushLotToCloud(newLot).catch(() => {});
       navigate('/');
     } catch (err: any) {
       setWeightError(err.message || 'Failed to save lot locally.');

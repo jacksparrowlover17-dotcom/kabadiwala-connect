@@ -8,10 +8,11 @@ import {
 import { getCurrentSession } from '../lib/authService';
 import { requestLotPurchase, confirmLotPurchaseByCollector } from '../lib/hubService';
 import PurchaseReceiptModal from '../components/PurchaseReceiptModal';
+import { pullLotsFromCloud } from '../lib/supabase';
 import {
   Wallet, Package, Volume2, Leaf, User,
   Edit3, X, Check, MapPin, Building2, CheckCircle2, Clock,
-  Receipt, Scale, PlusCircle, ChevronRight, AlertTriangle, Compass
+  Receipt, Scale, PlusCircle, ChevronRight, AlertTriangle, Compass, RefreshCw
 } from 'lucide-react';
 
 const LANGUAGES = [
@@ -81,6 +82,22 @@ export default function HomePage() {
       });
     }
   }, [liveProfile, activeUserId]);
+
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleManualSync = async () => {
+    setIsSyncing(true);
+    await pullLotsFromCloud();
+    setIsSyncing(false);
+  };
+
+  useEffect(() => {
+    pullLotsFromCloud();
+    const interval = setInterval(() => {
+      pullLotsFromCloud();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   const allLots = useLiveQuery(() => db.lots.reverse().sortBy('timestamp'), []) || [];
   const hubs = useLiveQuery(() => db.hubs.toArray()) || DEMO_HUBS;
@@ -208,17 +225,28 @@ export default function HomePage() {
 
       {/* ─── Lots Tabs ───────────────────────────────── */}
       <div>
-        <div className="flex gap-2 mb-3">
-          {(['ACTIVE', 'HISTORY'] as const).map(tab => (
-            <button key={tab} onClick={() => setLotTab(tab)}
-              className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
-                lotTab === tab
-                  ? 'bg-[#166534] text-white'
-                  : 'bg-white border border-[#e2e8f0] text-[#64748b] hover:border-[#166534] hover:text-[#166534]'
-              }`}>
-              {tab === 'ACTIVE' ? `Active (${activeLots.length})` : `History (${completedLots.length})`}
-            </button>
-          ))}
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="flex gap-2">
+            {(['ACTIVE', 'HISTORY'] as const).map(tab => (
+              <button key={tab} onClick={() => setLotTab(tab)}
+                className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
+                  lotTab === tab
+                    ? 'bg-[#166534] text-white'
+                    : 'bg-white border border-[#e2e8f0] text-[#64748b] hover:border-[#166534] hover:text-[#166534]'
+                }`}>
+                {tab === 'ACTIVE' ? `Active (${activeLots.length})` : `History (${completedLots.length})`}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={handleManualSync}
+            disabled={isSyncing}
+            className="flex items-center gap-1 text-[11px] font-bold text-[#166534] bg-[#f0fdf4] border border-[#bbf7d0] px-2.5 py-1.5 rounded-xl hover:bg-[#dcfce7] transition shadow-2xs"
+            title="Pull updates from cloud godown"
+          >
+            <RefreshCw size={11} className={isSyncing ? 'animate-spin' : ''} />
+            <span>{isSyncing ? 'Syncing...' : 'Sync Cloud'}</span>
+          </button>
         </div>
 
         {/* Active Lots */}
