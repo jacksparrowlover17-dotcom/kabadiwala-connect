@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, useNavigate, useLocation, Navigate } from
 import {
   Home, PlusSquare, ShieldCheck, Database, UserCircle,
   Building2, Truck, Scale, TrendingUp, Menu, X, Recycle,
-  LogIn, LogOut, Compass
+  LogIn, LogOut, Compass, WifiOff
 } from 'lucide-react';
 import HomePage from './pages/HomePage';
 import NewLotPage from './pages/NewLotPage';
@@ -20,8 +20,7 @@ import AdminVerificationPage from './pages/AdminVerificationPage';
 import DestinationFinderPage from './pages/DestinationFinderPage';
 import MyHandoversPage from './pages/MyHandoversPage';
 import WelcomeLandingPage from './pages/WelcomeLandingPage';
-import { db } from './lib/db';
-import { syncDataOnline } from './lib/supabase';
+import { syncDataOnline, pullLotsFromCloud } from './lib/supabase';
 import { getCurrentSession, logout, type AuthSession } from './lib/authService';
 
 export type Role = 'COLLECTOR' | 'HUB' | 'RECYCLER' | 'ADMIN';
@@ -218,6 +217,18 @@ function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
     navigate('/');
   };
 
+  const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
+  useEffect(() => {
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
+
   return (
     <header className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-[#e2e8f0] px-4 py-3 flex items-center gap-3 no-print">
       <button
@@ -243,6 +254,15 @@ function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
       </div>
 
       <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+        {!isOnline && (
+          <span 
+            className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1 shadow-2xs"
+            title="App is operating in Offline-First mode. Data is stored safely in local IndexedDB."
+          >
+            <WifiOff size={11} className="text-amber-700" />
+            <span>Offline</span>
+          </span>
+        )}
         {session ? (
           <div className="flex items-center gap-2">
             <button
@@ -406,8 +426,9 @@ function App() {
   useEffect(() => {
     const handleOnline = async () => {
       try {
-        const completedLots = await db.lots.where('status').equals('COMPLETED').toArray();
-        if (completedLots.length > 0) await syncDataOnline(completedLots);
+        console.log('Online detected. Synchronizing offline data to cloud...');
+        await syncDataOnline();
+        await pullLotsFromCloud();
       } catch (err) {
         console.error('Background sync failed:', err);
       }
